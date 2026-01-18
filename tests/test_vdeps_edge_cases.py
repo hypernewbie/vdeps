@@ -25,7 +25,10 @@ def test_bin_and_lib_directories(mock_subproc, mock_shutil):
     Test vdeps' extra search paths in bin/ and lib/ subdirectories
     """
     # multi_output generates files in bin/ and lib/ subdirs
-    with patch('sys.platform', 'linux'):
+    with patch('sys.platform', 'linux'), \
+         patch('vdeps.IS_WINDOWS', False), \
+         patch('vdeps.IS_MACOS', False), \
+         patch('vdeps.LIB_EXT', '.a'):
         original_file = vdeps.__file__
         vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
         
@@ -49,15 +52,20 @@ def test_shared_library_detection(mock_subproc, mock_shutil):
     """
     # Mock glob to return shared library files
     def mock_glob(pattern, recursive=False):
-        if 'vdeps/fake_lib' in pattern and 'build_debug' in pattern:
+        # Normalize pattern to handle Windows backslashes
+        norm_pattern = pattern.replace('\\', '/')
+        if 'vdeps/fake_lib' in norm_pattern and 'build_debug' in norm_pattern:
             return ['/path/to/fake_lib/build_debug/libfake_lib.so']
-        elif 'vdeps/fake_lib' in pattern and 'build_release' in pattern:
+        elif 'vdeps/fake_lib' in norm_pattern and 'build_release' in norm_pattern:
             return ['/path/to/fake_lib/build_release/libfake_lib.so']
         return ['/mnt/games/code/vdeps/tests/fixtures/vdeps/fake_tool/build_debug/fake_tool']
     
     with patch('sys.platform', 'linux'), \
+         patch('vdeps.IS_WINDOWS', False), \
+         patch('vdeps.IS_MACOS', False), \
+         patch('vdeps.LIB_EXT', '.a'), \
          patch('glob.glob', side_effect=mock_glob):
-        
+
         original_file = vdeps.__file__
         vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
         
@@ -77,19 +85,23 @@ def test_partial_artifact_match(mock_subproc, mock_shutil):
     # Mock glob to return mixed results
     def mock_glob(pattern, recursive=False):
         results = []
-        if 'build_' in pattern:
+        norm_pattern = pattern.replace('\\', '/')
+        if 'build_' in norm_pattern:
             # Return both matching and non-matching files
-            if 'fake_lib' in pattern:
+            if 'fake_lib' in norm_pattern:
                 results.append('/path/fake_lib.a')  # matches
                 results.append('/path/unrelated.a')  # doesn't match
-            if 'fake_tool' in pattern:
+            if 'fake_tool' in norm_pattern:
                 results.append('/path/fake_tool')  # matches
                 results.append('/path/other_tool')  # doesn't match
         return results
     
     with patch('sys.platform', 'linux'), \
+         patch('vdeps.IS_WINDOWS', False), \
+         patch('vdeps.IS_MACOS', False), \
+         patch('vdeps.LIB_EXT', '.a'), \
          patch('glob.glob', side_effect=mock_glob):
-        
+
         original_file = vdeps.__file__
         vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
         

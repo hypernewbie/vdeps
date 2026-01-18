@@ -27,20 +27,22 @@ def test_complex_lib_multiple_libs(mock_subproc, mock_shutil):
     and ignores the extras library that wasn't listed in TOML
     """
     def mock_glob(pattern, recursive=False):
+        # Normalize pattern to handle Windows backslashes
+        norm_pattern = pattern.replace('\\', '/')
         # Return files based on project and config - match actual paths, not patterns
-        if 'fake_lib' in pattern and 'build_debug' in pattern:
+        if 'fake_lib' in norm_pattern and 'build_debug' in norm_pattern:
             return ['/path/to/fake_lib/build_debug/libfake_lib.a']
-        elif 'fake_lib' in pattern and 'build_release' in pattern:
+        elif 'fake_lib' in norm_pattern and 'build_release' in norm_pattern:
             return ['/path/to/fake_lib/build_release/libfake_lib.a']
-        elif 'fake_tool' in pattern and 'build_debug' in pattern:
+        elif 'fake_tool' in norm_pattern and 'build_debug' in norm_pattern:
             return ['/path/to/fake_tool/build_debug/fake_tool']
-        elif 'fake_tool' in pattern and 'build_release' in pattern:
+        elif 'fake_tool' in norm_pattern and 'build_release' in norm_pattern:
             return ['/path/to/fake_tool/build_release/fake_tool']
-        elif 'complex_lib' in pattern and 'build_debug' in pattern:
+        elif 'complex_lib' in norm_pattern and 'build_debug' in norm_pattern:
             return ['/path/to/complex_lib/build_debug/libcomplex_core.a',
                     '/path/to/complex_lib/build_debug/libcomplex_utils.a',
                     '/path/to/complex_lib/build_debug/libcomplex_extras.a']
-        elif 'complex_lib' in pattern and 'build_release' in pattern:
+        elif 'complex_lib' in norm_pattern and 'build_release' in norm_pattern:
             return ['/path/to/complex_lib/build_release/libcomplex_core.a',
                     '/path/to/complex_lib/build_release/libcomplex_utils.a',
                     '/path/to/complex_lib/build_release/libcomplex_extras.a']
@@ -81,37 +83,39 @@ def test_mixed_project_all_artifact_types(mock_subproc, mock_shutil):
     Test mixed_project which has libs, executables, and extra_files
     """
     def mock_glob(pattern, recursive=False):
+        # Normalize pattern to handle Windows backslashes
+        norm_pattern = pattern.replace('\\', '/')
         # Return files for all projects, focusing on what mixed_project needs - match actual paths
-        if 'mixed_project' in pattern and 'build_debug' in pattern:
-            if pattern.endswith('/**/*'):
+        if 'mixed_project' in norm_pattern and 'build_debug' in norm_pattern:
+            if norm_pattern.endswith('/**/*'):
                 return ['/path/to/mixed_project/build_debug/libmixed.a',
                         '/path/to/mixed_project/build_debug/mixed_tool',
                         '/path/to/mixed_project/build_debug/data.blob']
-            elif 'lib' in pattern or '*.a' in pattern:
+            elif 'lib' in norm_pattern or '*.a' in norm_pattern:
                 return ['/path/to/mixed_project/build_debug/libmixed.a']
-            elif 'bin' in pattern or pattern.endswith('mixed_tool'):
+            elif 'bin' in norm_pattern or norm_pattern.endswith('mixed_tool'):
                 return ['/path/to/mixed_project/build_debug/mixed_tool']
-            elif 'data.blob' in pattern:
+            elif 'data.blob' in norm_pattern:
                 return ['/path/to/mixed_project/build_debug/data.blob']
-        elif 'mixed_project' in pattern and 'build_release' in pattern:
-            if pattern.endswith('/**/*'):
+        elif 'mixed_project' in norm_pattern and 'build_release' in norm_pattern:
+            if norm_pattern.endswith('/**/*'):
                 return ['/path/to/mixed_project/build_release/libmixed.a',
                         '/path/to/mixed_project/build_release/mixed_tool',
                         '/path/to/mixed_project/build_release/data.blob']
-            elif 'lib' in pattern or '*.a' in pattern:
+            elif 'lib' in norm_pattern or '*.a' in norm_pattern:
                 return ['/path/to/mixed_project/build_release/libmixed.a']
-            elif 'bin' in pattern or pattern.endswith('mixed_tool'):
+            elif 'bin' in norm_pattern or norm_pattern.endswith('mixed_tool'):
                 return ['/path/to/mixed_project/build_release/mixed_tool']
-            elif 'data.blob' in pattern:
+            elif 'data.blob' in norm_pattern:
                 return ['/path/to/mixed_project/build_release/data.blob']
         # Also include files from other deps
-        elif 'fake_lib' in pattern and 'build' in pattern:
+        elif 'fake_lib' in norm_pattern and 'build' in norm_pattern:
             return ['/path/to/fake_lib/build_debug/libfake_lib.a'
-                    if 'debug' in pattern else
+                    if 'debug' in norm_pattern else
                     '/path/to/fake_lib/build_release/libfake_lib.a']
-        elif 'fake_tool' in pattern and 'build' in pattern:
+        elif 'fake_tool' in norm_pattern and 'build' in norm_pattern:
             return ['/path/to/fake_tool/build_debug/fake_tool'
-                    if 'debug' in pattern else
+                    if 'debug' in norm_pattern else
                     '/path/to/fake_tool/build_release/fake_tool']
         return []
     
@@ -147,13 +151,15 @@ def test_lib_copy_all_when_null(mock_subproc, mock_shutil):
     Test empty_config which has no 'libs' field - should copy all .a files
     """
     def mock_glob(pattern, recursive=False):
+        # Normalize pattern to handle Windows backslashes
+        norm_pattern = pattern.replace('\\', '/')
         # Return files for empty_config with 4 libraries - match actual paths
-        if 'empty_config' in pattern and 'build_debug' in pattern:
+        if 'empty_config' in norm_pattern and 'build_debug' in norm_pattern:
             return ['/path/to/empty_config/build_debug/libemptyfoo.a',
                     '/path/to/empty_config/build_debug/libemptybar.a',
                     '/path/to/empty_config/build_debug/libemptybaz.a',
                     '/path/to/empty_config/build_debug/libemptyqux.a']
-        elif 'empty_config' in pattern and 'build_release' in pattern:
+        elif 'empty_config' in norm_pattern and 'build_release' in norm_pattern:
             return ['/path/to/empty_config/build_release/libemptyfoo.a',
                     '/path/to/empty_config/build_release/libemptybar.a',
                     '/path/to/empty_config/build_release/libemptybaz.a',
