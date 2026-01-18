@@ -1,5 +1,7 @@
 # Vdeps - Simple dependency compiler for CMake
 
+[![build](https://github.com/hypernewbie/vdeps/actions/workflows/ci.yml/badge.svg)](https://github.com/hypernewbie/vdeps/actions/workflows/ci.yml)
+
 Vdeps is a lightweight Python script that compiles cmake dependencies for you. This is great if you just went to compile them in a separate directory without dealing with the fun task
 of trying to link the cmakes builds together directly. In the end you just want to build some libraries and copy them into a folder for your project to link, right?
 
