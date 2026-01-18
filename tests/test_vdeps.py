@@ -43,9 +43,13 @@ def test_linux_build(mock_subproc, mock_shutil):
             return ['/path/to/fake_tool/build_release/fake_tool']
         return []
 
-    # 1. Mock Platform
+    # 1. Mock Platform and module-level constants
     with patch('sys.platform', 'linux'), \
-         patch('glob.glob', side_effect=mock_glob):
+         patch('glob.glob', side_effect=mock_glob), \
+         patch('vdeps.IS_WINDOWS', False), \
+         patch('vdeps.IS_MACOS', False), \
+         patch('vdeps.PLATFORM_TAG', 'linux'), \
+         patch('vdeps.LIB_EXT', '.a'):
         # 2. Mock __file__ so vdeps finds our fixture TOML
         # We need to set it on the module
         original_file = vdeps.__file__

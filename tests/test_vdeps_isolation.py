@@ -24,8 +24,20 @@ def test_debug_release_isolation(mock_subproc, mock_shutil):
     """
     Test that debug and release builds don't mix artifacts
     """
+    def mock_glob(pattern, recursive=False):
+        # Return dependency-specific paths to match actual patterns
+        if 'fake_lib' in pattern and 'build_debug' in pattern:
+            return ['/fake/path/fake_lib/build_debug/libfake_lib.a']
+        elif 'fake_lib' in pattern and 'build_release' in pattern:
+            return ['/fake/path/fake_lib/build_release/libfake_lib.a']
+        elif 'fake_tool' in pattern and 'build_debug' in pattern:
+            return ['/fake/path/fake_tool/build_debug/fake_tool']
+        elif 'fake_tool' in pattern and 'build_release' in pattern:
+            return ['/fake/path/fake_tool/build_release/fake_tool']
+        return []
+    
     with patch('sys.platform', 'linux'), \
-         patch('glob.glob', return_value=['/fake/path/libtest.a']):  # Basic mock to enable copying
+         patch('glob.glob', side_effect=mock_glob):
         original_file = vdeps.__file__
         vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
         
@@ -56,8 +68,20 @@ def test_platform_output_dirs(mock_subproc, mock_shutil):
     """
     Test that platform-specific output directories are used correctly
     """
+    def mock_glob(pattern, recursive=False):
+        # Return dependency-specific paths to match actual patterns
+        if 'fake_lib' in pattern and 'build_debug' in pattern:
+            return ['/fake/path/fake_lib/build_debug/libfake_lib.a']
+        elif 'fake_lib' in pattern and 'build_release' in pattern:
+            return ['/fake/path/fake_lib/build_release/libfake_lib.a']
+        elif 'fake_tool' in pattern and 'build_debug' in pattern:
+            return ['/fake/path/fake_tool/build_debug/fake_tool']
+        elif 'fake_tool' in pattern and 'build_release' in pattern:
+            return ['/fake/path/fake_tool/build_release/fake_tool']
+        return []
+    
     with patch('sys.platform', 'linux'), \
-         patch('glob.glob', return_value=['/fake/path/libtest.a']):
+         patch('glob.glob', side_effect=mock_glob):
         original_file = vdeps.__file__
         vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
         
