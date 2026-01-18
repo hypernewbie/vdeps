@@ -2,7 +2,7 @@
 name = "vdeps"
 version = "0.1.0"
 dependencies = [
-    "tomllib; python_version < \"3.11\"",
+    "tomli; python_version < \"3.11\"",
 ]
 
 [project.optional-dependencies]

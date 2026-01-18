@@ -25,7 +25,11 @@ import shutil
 import glob
 import sys
 import platform
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 
 # --- Configuration ---
 

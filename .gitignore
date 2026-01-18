@@ -5,3 +5,5 @@ venv/
 build_*/
 lib/
 tools/
+.coverage
+vdeps.egg-info/
