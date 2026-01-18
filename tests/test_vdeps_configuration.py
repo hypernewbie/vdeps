@@ -27,27 +27,31 @@ def test_complex_lib_multiple_libs(mock_subproc, mock_shutil):
     and ignores the extras library that wasn't listed in TOML
     """
     def mock_glob(pattern, recursive=False):
-        # Return files based on project and config
-        if 'complex_lib' in pattern and 'build_debug' in pattern:
-            return ['tests/fixtures/vdeps/complex_lib/build_debug/libcomplex_core.a',
-                    'tests/fixtures/vdeps/complex_lib/build_debug/libcomplex_utils.a',
-                    'tests/fixtures/vdeps/complex_lib/build_debug/libcomplex_extras.a']
+        # Return files based on project and config - match actual paths, not patterns
+        if 'fake_lib' in pattern and 'build_debug' in pattern:
+            return ['/path/to/fake_lib/build_debug/libfake_lib.a']
+        elif 'fake_lib' in pattern and 'build_release' in pattern:
+            return ['/path/to/fake_lib/build_release/libfake_lib.a']
+        elif 'fake_tool' in pattern and 'build_debug' in pattern:
+            return ['/path/to/fake_tool/build_debug/fake_tool']
+        elif 'fake_tool' in pattern and 'build_release' in pattern:
+            return ['/path/to/fake_tool/build_release/fake_tool']
+        elif 'complex_lib' in pattern and 'build_debug' in pattern:
+            return ['/path/to/complex_lib/build_debug/libcomplex_core.a',
+                    '/path/to/complex_lib/build_debug/libcomplex_utils.a',
+                    '/path/to/complex_lib/build_debug/libcomplex_extras.a']
         elif 'complex_lib' in pattern and 'build_release' in pattern:
-            return ['tests/fixtures/vdeps/complex_lib/build_release/libcomplex_core.a',
-                    'tests/fixtures/vdeps/complex_lib/build_release/libcomplex_utils.a',
-                    'tests/fixtures/vdeps/complex_lib/build_release/libcomplex_extras.a']
-        elif 'fake_lib' in pattern and 'build' in pattern:
-            return ['tests/fixtures/vdeps/fake_lib/build_debug/fake_lib.a'
-                    if 'debug' in pattern else
-                    'tests/fixtures/vdeps/fake_lib/build_release/fake_lib.a']
-        elif 'fake_tool' in pattern and 'build' in pattern:
-            return ['tests/fixtures/vdeps/fake_tool/build_debug/fake_tool'
-                    if 'debug' in pattern else
-                    'tests/fixtures/vdeps/fake_tool/build_release/fake_tool']
+            return ['/path/to/complex_lib/build_release/libcomplex_core.a',
+                    '/path/to/complex_lib/build_release/libcomplex_utils.a',
+                    '/path/to/complex_lib/build_release/libcomplex_extras.a']
         return []
     
     with patch('sys.platform', 'linux'), \
-         patch('glob.glob', side_effect=mock_glob):
+         patch('glob.glob', side_effect=mock_glob), \
+         patch('vdeps.IS_WINDOWS', False), \
+         patch('vdeps.IS_MACOS', False), \
+         patch('vdeps.PLATFORM_TAG', 'linux'), \
+         patch('vdeps.LIB_EXT', '.a'):
         original_file = vdeps.__file__
         vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
         
@@ -77,42 +81,46 @@ def test_mixed_project_all_artifact_types(mock_subproc, mock_shutil):
     Test mixed_project which has libs, executables, and extra_files
     """
     def mock_glob(pattern, recursive=False):
-        # Return files for all projects, focusing on what mixed_project needs
+        # Return files for all projects, focusing on what mixed_project needs - match actual paths
         if 'mixed_project' in pattern and 'build_debug' in pattern:
             if pattern.endswith('/**/*'):
-                return ['tests/fixtures/vdeps/mixed_project/build_debug/libmixed.a',
-                        'tests/fixtures/vdeps/mixed_project/build_debug/mixed_tool',
-                        'tests/fixtures/vdeps/mixed_project/build_debug/data.blob']
+                return ['/path/to/mixed_project/build_debug/libmixed.a',
+                        '/path/to/mixed_project/build_debug/mixed_tool',
+                        '/path/to/mixed_project/build_debug/data.blob']
             elif 'lib' in pattern or '*.a' in pattern:
-                return ['tests/fixtures/vdeps/mixed_project/build_debug/libmixed.a']
+                return ['/path/to/mixed_project/build_debug/libmixed.a']
             elif 'bin' in pattern or pattern.endswith('mixed_tool'):
-                return ['tests/fixtures/vdeps/mixed_project/build_debug/mixed_tool']
+                return ['/path/to/mixed_project/build_debug/mixed_tool']
             elif 'data.blob' in pattern:
-                return ['tests/fixtures/vdeps/mixed_project/build_debug/data.blob']
+                return ['/path/to/mixed_project/build_debug/data.blob']
         elif 'mixed_project' in pattern and 'build_release' in pattern:
             if pattern.endswith('/**/*'):
-                return ['tests/fixtures/vdeps/mixed_project/build_release/libmixed.a',
-                        'tests/fixtures/vdeps/mixed_project/build_release/mixed_tool',
-                        'tests/fixtures/vdeps/mixed_project/build_release/data.blob']
+                return ['/path/to/mixed_project/build_release/libmixed.a',
+                        '/path/to/mixed_project/build_release/mixed_tool',
+                        '/path/to/mixed_project/build_release/data.blob']
             elif 'lib' in pattern or '*.a' in pattern:
-                return ['tests/fixtures/vdeps/mixed_project/build_release/libmixed.a']
+                return ['/path/to/mixed_project/build_release/libmixed.a']
             elif 'bin' in pattern or pattern.endswith('mixed_tool'):
-                return ['tests/fixtures/vdeps/mixed_project/build_release/mixed_tool']
+                return ['/path/to/mixed_project/build_release/mixed_tool']
             elif 'data.blob' in pattern:
-                return ['tests/fixtures/vdeps/mixed_project/build_release/data.blob']
+                return ['/path/to/mixed_project/build_release/data.blob']
         # Also include files from other deps
         elif 'fake_lib' in pattern and 'build' in pattern:
-            return ['tests/fixtures/vdeps/fake_lib/build_debug/fake_lib.a'
+            return ['/path/to/fake_lib/build_debug/libfake_lib.a'
                     if 'debug' in pattern else
-                    'tests/fixtures/vdeps/fake_lib/build_release/fake_lib.a']
+                    '/path/to/fake_lib/build_release/libfake_lib.a']
         elif 'fake_tool' in pattern and 'build' in pattern:
-            return ['tests/fixtures/vdeps/fake_tool/build_debug/fake_tool'
+            return ['/path/to/fake_tool/build_debug/fake_tool'
                     if 'debug' in pattern else
-                    'tests/fixtures/vdeps/fake_tool/build_release/fake_tool']
+                    '/path/to/fake_tool/build_release/fake_tool']
         return []
     
     with patch('sys.platform', 'linux'), \
-         patch('glob.glob', side_effect=mock_glob):
+         patch('glob.glob', side_effect=mock_glob), \
+         patch('vdeps.IS_WINDOWS', False), \
+         patch('vdeps.IS_MACOS', False), \
+         patch('vdeps.PLATFORM_TAG', 'linux'), \
+         patch('vdeps.LIB_EXT', '.a'):
         original_file = vdeps.__file__
         vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
         
@@ -139,20 +147,25 @@ def test_lib_copy_all_when_null(mock_subproc, mock_shutil):
     Test empty_config which has no 'libs' field - should copy all .a files
     """
     def mock_glob(pattern, recursive=False):
-        # Return files for empty_config with 4 libraries
+        # Return files for empty_config with 4 libraries - match actual paths
         if 'empty_config' in pattern and 'build_debug' in pattern:
-            return ['tests/fixtures/vdeps/empty_config/build_debug/libemptyfoo.a',
-                    'tests/fixtures/vdeps/empty_config/build_debug/libemptybar.a',
-                    'tests/fixtures/vdeps/empty_config/build_debug/libemptybaz.a',
-                    'tests/fixtures/vdeps/empty_config/build_debug/libemptyqux.a']
+            return ['/path/to/empty_config/build_debug/libemptyfoo.a',
+                    '/path/to/empty_config/build_debug/libemptybar.a',
+                    '/path/to/empty_config/build_debug/libemptybaz.a',
+                    '/path/to/empty_config/build_debug/libemptyqux.a']
         elif 'empty_config' in pattern and 'build_release' in pattern:
-            return ['tests/fixtures/vdeps/empty_config/build_release/libemptyfoo.a',
-                    'tests/fixtures/vdeps/empty_config/build_release/libemptybar.a',
-                    'tests/fixtures/vdeps/empty_config/build_release/libemptybaz.a',
-                    'tests/fixtures/vdeps/empty_config/build_release/libemptyqux.a']
+            return ['/path/to/empty_config/build_release/libemptyfoo.a',
+                    '/path/to/empty_config/build_release/libemptybar.a',
+                    '/path/to/empty_config/build_release/libemptybaz.a',
+                    '/path/to/empty_config/build_release/libemptyqux.a']
         return []
     
-    with patch('sys.platform', 'linux'), patch('glob.glob', side_effect=mock_glob):
+    with patch('sys.platform', 'linux'), \
+         patch('glob.glob', side_effect=mock_glob), \
+         patch('vdeps.IS_WINDOWS', False), \
+         patch('vdeps.IS_MACOS', False), \
+         patch('vdeps.PLATFORM_TAG', 'linux'), \
+         patch('vdeps.LIB_EXT', '.a'):
         original_file = vdeps.__file__
         vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
         

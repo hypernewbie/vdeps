@@ -37,7 +37,11 @@ def test_debug_release_isolation(mock_subproc, mock_shutil):
         return []
     
     with patch('sys.platform', 'linux'), \
-         patch('glob.glob', side_effect=mock_glob):
+         patch('glob.glob', side_effect=mock_glob), \
+         patch('vdeps.IS_WINDOWS', False), \
+         patch('vdeps.IS_MACOS', False), \
+         patch('vdeps.PLATFORM_TAG', 'linux'), \
+         patch('vdeps.LIB_EXT', '.a'):
         original_file = vdeps.__file__
         vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
         
@@ -81,7 +85,11 @@ def test_platform_output_dirs(mock_subproc, mock_shutil):
         return []
     
     with patch('sys.platform', 'linux'), \
-         patch('glob.glob', side_effect=mock_glob):
+         patch('glob.glob', side_effect=mock_glob), \
+         patch('vdeps.IS_WINDOWS', False), \
+         patch('vdeps.IS_MACOS', False), \
+         patch('vdeps.PLATFORM_TAG', 'linux'), \
+         patch('vdeps.LIB_EXT', '.a'):
         original_file = vdeps.__file__
         vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
         
@@ -120,7 +128,11 @@ def test_multi_dependency_isolation(mock_subproc, mock_shutil):
         return []
     
     with patch('sys.platform', 'linux'), \
-         patch('glob.glob', side_effect=mock_glob_function):
+         patch('glob.glob', side_effect=mock_glob_function), \
+         patch('vdeps.IS_WINDOWS', False), \
+         patch('vdeps.IS_MACOS', False), \
+         patch('vdeps.PLATFORM_TAG', 'linux'), \
+         patch('vdeps.LIB_EXT', '.a'):
         original_file = vdeps.__file__
         vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
         
