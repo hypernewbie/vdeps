@@ -24,7 +24,8 @@ def test_debug_release_isolation(mock_subproc, mock_shutil):
     """
     Test that debug and release builds don't mix artifacts
     """
-    with patch('sys.platform', 'linux'):
+    with patch('sys.platform', 'linux'), \
+         patch('glob.glob', return_value=['/fake/path/libtest.a']):  # Basic mock to enable copying
         original_file = vdeps.__file__
         vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
         
@@ -55,7 +56,8 @@ def test_platform_output_dirs(mock_subproc, mock_shutil):
     """
     Test that platform-specific output directories are used correctly
     """
-    with patch('sys.platform', 'linux'):
+    with patch('sys.platform', 'linux'), \
+         patch('glob.glob', return_value=['/fake/path/libtest.a']):
         original_file = vdeps.__file__
         vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
         
@@ -77,7 +79,24 @@ def test_multi_dependency_isolation(mock_subproc, mock_shutil):
     """
     Test that multiple dependencies don't interfere with each other
     """
-    with patch('sys.platform', 'linux'):
+    def mock_glob_function(pattern, recursive=False):
+        # Return appropriate fake artifacts for different dependencies
+        if 'fake_lib' in pattern:
+            return ['/fake/path/libfake_lib.a']
+        elif 'fake_tool' in pattern:
+            return ['/fake/path/fake_tool']
+        elif 'complex_lib' in pattern:
+            return ['/fake/path/libcomplex_core.a', '/fake/path/libcomplex_utils.a']
+        elif 'mixed_project' in pattern:
+            return ['/fake/path/libmixed.a', '/fake/path/mixed_tool', '/fake/path/data.blob']
+        elif 'empty_config' in pattern:
+            return ['/fake/path/libempty_config.a']
+        elif 'multi_output' in pattern:
+            return ['/fake/path/libmulti_output.a']
+        return []
+    
+    with patch('sys.platform', 'linux'), \
+         patch('glob.glob', side_effect=mock_glob_function):
         original_file = vdeps.__file__
         vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
         
@@ -109,7 +128,7 @@ def test_multi_dependency_isolation(mock_subproc, mock_shutil):
     copy_sources = [os.path.basename(c[0][0]) for c in mock_shutil.call_args_list]
     
     # Should have artifacts from multiple deps
-    assert 'fake_lib.a' in copy_sources
+    assert 'libfake_lib.a' in copy_sources
     assert 'fake_tool' in copy_sources
     assert any('complex' in f for f in copy_sources)
     assert any('mixed' in f for f in copy_sources)

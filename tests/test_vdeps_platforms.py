@@ -29,6 +29,18 @@ def test_macos_build(mock_subproc, mock_shutil):
     - Should look for .a libraries and .dylib files
     - Should look for executables without extension
     """
+    def mock_glob_function(pattern, recursive=False):
+        # Return macOS-specific artifacts
+        if 'fake_lib' in pattern and 'build_debug' in pattern:
+            return ['/path/to/fake_lib/build_debug/libfake_lib.a']
+        elif 'fake_lib' in pattern and 'build_release' in pattern:
+            return ['/path/to/fake_lib/build_release/libfake_lib.a']
+        elif 'fake_tool' in pattern and 'build_debug' in pattern:
+            return ['/path/to/fake_tool/build_debug/fake_tool']
+        elif 'fake_tool' in pattern and 'build_release' in pattern:
+            return ['/path/to/fake_tool/build_release/fake_tool']
+        return []
+    
     # Store original values
     orig_is_windows = vdeps.IS_WINDOWS
     orig_is_macos = vdeps.IS_MACOS
@@ -46,7 +58,8 @@ def test_macos_build(mock_subproc, mock_shutil):
     vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
     
     try:
-        with patch('sys.platform', 'darwin'):
+        with patch('sys.platform', 'darwin'), \
+             patch('glob.glob', side_effect=mock_glob_function):
             vdeps.main()
     finally:
         vdeps.__file__ = original_file
