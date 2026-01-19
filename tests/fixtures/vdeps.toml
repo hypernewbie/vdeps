@@ -1,28 +1,24 @@
 [[dependency]]
 name = "fake_lib"
 rel_path = "fake_lib"
-init_submodules = false
 libs = ["fake_lib"]
 cmake_options = ["-DOPTION_A=ON"]
 
 [[dependency]]
 name = "fake_tool"
 rel_path = "fake_tool"
-init_submodules = false
 executables = ["fake_tool"]
 cmake_options = ["-DOPTION_B=ON"]
 
 [[dependency]]
 name = "complex_lib"
 rel_path = "complex_lib"
-init_submodules = false
 libs = ["complex_core", "complex_utils"]
 cmake_options = ["-DCOMPLEX_ENABLE_EXTRAS=ON"]
 
 [[dependency]]
 name = "mixed_project"
 rel_path = "mixed_project"
-init_submodules = false
 libs = ["mixed"]
 executables = ["mixed_tool"]
 extra_files = ["data.blob"]
@@ -31,7 +27,6 @@ cmake_options = []
 [[dependency]]
 name = "multi_output"
 rel_path = "multi_output"
-init_submodules = false
 libs = ["multi"]
 executables = ["multi_tool1", "multi_tool2"]
 cmake_options = []
@@ -39,7 +34,6 @@ cmake_options = []
 [[dependency]]
 name = "empty_config"
 rel_path = "empty_config"
-init_submodules = false
 # libs field intentionally omitted - tests auto-detection
 cmake_options = []
 

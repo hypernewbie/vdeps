@@ -143,7 +143,7 @@ def get_platform_cmake_args(cxx_standard=20):
             "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>",
             # Turn off all warnings
             "-DCMAKE_C_FLAGS=/W0",
-            "-DCMAKE_CXX_FLAGS=/W0",
+            "-DCMAKE_CXX_FLAGS=/W0 /EHsc",
         ]
     else:
         # Unix-like flags (Clang + Ninja + libc++)
@@ -186,7 +186,6 @@ class Dependency:
         libs=None,
         executables=None,
         extra_files=None,
-        init_submodules=False,
         extra_link_dirs=None,
         cxx_standard=20,
     ):
@@ -200,7 +199,7 @@ class Dependency:
         :param executables: List of executable base names to copy (e.g. ['nvrhi-scomp']).
                             Matches 'nvrhi-scomp' (Linux) or 'nvrhi-scomp.exe' (Windows).
         :param extra_files: List of specific filenames to find and copy to the tools directory (e.g. ['slangc.exe', 'slang.dll']).
-        :param init_submodules: Whether to init git submodules.
+
         :param extra_link_dirs: List of additional paths to add to linker search paths for this dependency.
         :param cxx_standard: C++ standard version (e.g. 17, 20, 23). Default is 20.
         """
@@ -210,7 +209,7 @@ class Dependency:
         self.libs = libs
         self.executables = executables
         self.extra_files = extra_files
-        self.init_submodules = init_submodules
+
         self.extra_link_dirs = extra_link_dirs or []
         self.cxx_standard = cxx_standard
 
@@ -275,26 +274,6 @@ def main():
         dep.extra_files = (
             filter_platform_items(dep.extra_files or []) if dep.extra_files else None
         )
-
-        if dep.init_submodules:
-            print(f"--- Initializing Submodules for {dep.name} ---")
-            if os.path.exists(os.path.join(dep_dir, ".git")) or os.path.exists(
-                os.path.join(dep_dir, "..", ".git")
-            ):
-                run_command(
-                    [
-                        "git",
-                        "submodule",
-                        "update",
-                        "--init",
-                        "--recursive",
-                        "--depth",
-                        "1",
-                    ],
-                    cwd=dep_dir,
-                )
-            else:
-                print("Skipping submodule update (not a git repo)")
 
         for config in CONFIGS:
             # Determine actual CMake build type
