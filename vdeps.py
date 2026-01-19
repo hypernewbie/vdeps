@@ -153,7 +153,7 @@ def get_platform_cmake_args(cxx_standard=20):
             "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>",
             # Turn off all warnings
             "-DCMAKE_C_FLAGS=/W0",
-            "-DCMAKE_CXX_FLAGS=/W0 /EHsc",
+            "-DCMAKE_CXX_FLAGS=/W0 /EHsc /MP",
         ]
     else:
         # Unix-like flags (Clang + Ninja + libc++)
@@ -372,7 +372,7 @@ def main():
 
             # CMake Build
             # For Multi-Config generators (like VS), we must specify --config
-            build_cmd = ["cmake", "--build", build_dir]
+            build_cmd = ["cmake", "--build", build_dir, "--parallel"]
             if IS_WINDOWS:
                 build_cmd.extend(["--config", build_type])
 
