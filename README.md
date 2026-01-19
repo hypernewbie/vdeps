@@ -32,7 +32,6 @@ temp_dir = "builds"
 [[dependency]]
 name = "nvrhi"
 rel_path = "nvrhi"
-init_submodules = true
 cxx_standard = 20
 libs = ["nvrhi_vk", "rtxmu", "nvrhi"]
 executables = []
@@ -53,7 +52,6 @@ cmake_options = [
 | `libs` | Library base names to copy (e.g. `["nvrhi"]` matches `libnvrhi.a` or `nvrhi.lib`) |
 | `executables` | Executable base names to copy to tools directory |
 | `extra_files` | Specific filenames to copy (e.g. `["slangc.exe", "slang.dll"]`) |
-| `init_submodules` | Whether to initialise git submodules |
 | `cmake_options` | List of CMake flags passed during configuration |
 | `cxx_standard` | C++ standard version (default: 20) |
 | `extra_link_dirs` | Additional linker search paths for this dependency |
