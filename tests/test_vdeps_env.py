@@ -21,9 +21,10 @@ def mock_shutil():
     with patch('shutil.copy2') as mock:
         yield mock
 
-def test_windows_env_vars(mock_subproc, mock_shutil):
+def test_windows_linker_flags(mock_subproc, mock_shutil):
     """
-    Test that environment variables (LIB, CMAKE_LIBRARY_PATH) are correctly set on Windows.
+    Test that on Windows, library paths are converted to /LIBPATH:"..." flags 
+    and passed to CMake via -DCMAKE_EXE_LINKER_FLAGS and -DCMAKE_SHARED_LINKER_FLAGS.
     """
     with patch('sys.platform', 'win32'), \
          patch('glob.glob', return_value=[]), \
@@ -34,7 +35,6 @@ def test_windows_env_vars(mock_subproc, mock_shutil):
         original_file = vdeps.__file__
         vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
         
-        # Expected lib dir based on fixture path
         expected_lib_root = os.path.join(FIXTURES_DIR, 'lib')
         
         try:
@@ -43,98 +43,31 @@ def test_windows_env_vars(mock_subproc, mock_shutil):
             vdeps.__file__ = original_file
 
     # Verify calls
-    # We look for the call corresponding to building a dependency (cmake --build or cmake -S)
-    # vdeps.toml in fixtures has 'fake_lib' 
-    
     # Filter for cmake calls
     cmake_calls = [c for c in mock_subproc.call_args_list if 'cmake' in c[0][0]]
     assert len(cmake_calls) > 0, "Should have called cmake"
     
-    for call_args in cmake_calls:
-        args, kwargs = call_args
-        env = kwargs.get('env')
-        assert env is not None, "Environment should be passed to cmake"
-        
-        # Check LIB
-        lib_env = env.get('LIB', '')
-        # We expect paths like .../fixtures/lib/win_debug or .../fixtures/lib/win_release
-        assert expected_lib_root in lib_env, f"LIB env var should contain library path. Got: {lib_env}"
-        
-        # Check CMAKE_LIBRARY_PATH
-        cmake_lib_path = env.get('CMAKE_LIBRARY_PATH', '')
-        assert expected_lib_root in cmake_lib_path
+    # Check the first configure call (fake_lib)
+    args = cmake_calls[0][0][0]
+    
+    # Find linker flags arg
+    # We now expect MERGED flags, so find any argument starting with -DCMAKE_EXE_LINKER_FLAGS=
+    linker_flag_arg = next((a for a in args if '-DCMAKE_EXE_LINKER_FLAGS=' in a), None)
+    assert linker_flag_arg is not None, "Should have CMAKE_EXE_LINKER_FLAGS"
+    
+    # Check content
+    # Expected: /LIBPATH:".../fixtures/lib/win_debug" (for debug config)
+    # The path should be quoted
+    assert '/LIBPATH:' in linker_flag_arg
+    assert expected_lib_root in linker_flag_arg
+    
+    # Ensure it's quoted correctly
+    assert f'"{expected_lib_root}' in linker_flag_arg or f'\'{expected_lib_root}' in linker_flag_arg
 
-
-def test_library_paths_injection(mock_subproc, mock_shutil):
+def test_linux_linker_flags(mock_subproc, mock_shutil):
     """
-    Test that 'library_paths' from TOML are correctly added to environment variables.
-    """
-    mock_toml_data = {
-        "dependency": [
-            {
-                "name": "test_lib_paths",
-                "rel_path": "fake_lib",
-                "cmake_options": [],
-                "library_paths": [os.path.join("external", "libs"), "/opt/local/lib"]
-            }
-        ]
-    }
-
-    # We need to mock open() to avoid FileNotFoundError when vdeps tries to open vdeps.toml
-    # And we need to mock tomllib.load to return our data
-    # And os.path.exists to say vdeps.toml exists
-    
-    with patch('sys.platform', 'win32'), \
-         patch('glob.glob', return_value=[]), \
-         patch('vdeps.IS_WINDOWS', True), \
-         patch('vdeps.IS_MACOS', False), \
-         patch('vdeps.PLATFORM_TAG', 'win'), \
-                      patch('vdeps.tomllib.load', return_value=mock_toml_data), \
-                      patch('builtins.open', new_callable=MagicMock), \
-                      patch('os.path.exists') as mock_exists, \
-                      patch('os.makedirs'):
-        # Configure path existence
-        def side_effect(path):
-            # Allow vdeps.toml check
-            if 'vdeps.toml' in path: return True
-            # Allow dependency dir check (we point to fixture)
-            if 'fake_lib' in path: return True
-            return False
-        mock_exists.side_effect = side_effect
-        
-        original_file = vdeps.__file__
-        # Point to fixtures dir so it resolves 'fake_lib' correctly (relative to root)
-        vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
-        
-        try:
-            vdeps.main()
-        finally:
-            vdeps.__file__ = original_file
-
-    # Verify calls
-    cmake_calls = [c for c in mock_subproc.call_args_list if 'cmake' in c[0][0]]
-    assert len(cmake_calls) > 0
-    
-    # Check the first build call
-    args, kwargs = cmake_calls[0]
-    env = kwargs.get('env')
-    lib_env = env.get('LIB', '')
-    
-    # 1. Check relative path resolution (relative to fixtures dir)
-    expected_resolved = os.path.join(FIXTURES_DIR, "external", "libs")
-    assert expected_resolved in lib_env, f"Should resolve relative library_paths. Got: {lib_env}"
-    
-    # 2. Check absolute path preservation
-    assert "/opt/local/lib" in lib_env, "Should preserve absolute library_paths"
-    
-    # 3. Check that it uses correct separator (;)
-    assert ';' in lib_env
-
-
-
-def test_linux_env_vars(mock_subproc, mock_shutil):
-    """
-    Test that environment variables (LIBRARY_PATH, CMAKE_LIBRARY_PATH) are correctly set on Linux.
+    Test that on Linux, library paths are converted to -L"..." flags 
+    and passed to CMake.
     """
     with patch('sys.platform', 'linux'), \
          patch('glob.glob', return_value=[]), \
@@ -154,15 +87,67 @@ def test_linux_env_vars(mock_subproc, mock_shutil):
     cmake_calls = [c for c in mock_subproc.call_args_list if 'cmake' in c[0][0]]
     assert len(cmake_calls) > 0
     
-    for call_args in cmake_calls:
-        args, kwargs = call_args
-        env = kwargs.get('env')
-        assert env is not None
+    args = cmake_calls[0][0][0]
+    linker_flag_arg = next((a for a in args if '-DCMAKE_EXE_LINKER_FLAGS=' in a), None)
+    assert linker_flag_arg is not None
+    
+    # Expected: -L".../fixtures/lib/linux_debug"
+    assert '-L' in linker_flag_arg
+    assert expected_lib_root in linker_flag_arg
+
+def test_library_paths_injection(mock_subproc, mock_shutil):
+    """
+    Test that 'extra_link_dirs' from TOML are correctly added to CMake linker flags.
+    """
+    mock_toml_data = {
+        "dependency": [
+            {
+                "name": "test_lib_paths",
+                "rel_path": "fake_lib",
+                "cmake_options": [],
+                "extra_link_dirs": [os.path.join("external", "libs"), "C:/opt/local/lib"]
+            }
+        ]
+    }
+
+    with patch('sys.platform', 'win32'), \
+         patch('glob.glob', return_value=[]), \
+         patch('vdeps.IS_WINDOWS', True), \
+         patch('vdeps.IS_MACOS', False), \
+         patch('vdeps.PLATFORM_TAG', 'win'), \
+         patch('vdeps.tomllib.load', return_value=mock_toml_data), \
+         patch('builtins.open', new_callable=MagicMock), \
+         patch('os.path.exists') as mock_exists, \
+         patch('os.makedirs'):
+
+        def side_effect(path):
+            if 'vdeps.toml' in path: return True
+            if 'fake_lib' in path: return True
+            return False
+        mock_exists.side_effect = side_effect
         
-        # Check LIBRARY_PATH (Linux specific)
-        lib_path_env = env.get('LIBRARY_PATH', '')
-        assert expected_lib_root in lib_path_env, f"LIBRARY_PATH should be set. Got: {lib_path_env}"
+        original_file = vdeps.__file__
+        vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
         
-        # Check CMAKE_LIBRARY_PATH
-        cmake_lib_path = env.get('CMAKE_LIBRARY_PATH', '')
-        assert expected_lib_root in cmake_lib_path
+        try:
+            vdeps.main()
+        finally:
+            vdeps.__file__ = original_file
+
+    # Verify calls
+    cmake_calls = [c for c in mock_subproc.call_args_list if 'cmake' in c[0][0]]
+    assert len(cmake_calls) > 0
+    
+    args = cmake_calls[0][0][0]
+    linker_flag_arg = next((a for a in args if '-DCMAKE_EXE_LINKER_FLAGS=' in a), None)
+    
+    # 1. Check relative path resolution
+    expected_resolved = os.path.join(FIXTURES_DIR, "external", "libs")
+    assert expected_resolved in linker_flag_arg
+    
+    # 2. Check absolute path
+    assert "C:/opt/local/lib" in linker_flag_arg
+
+    # 3. Check format (Windows)
+    assert f'/LIBPATH:"{expected_resolved}"' in linker_flag_arg
+    assert '/LIBPATH:"C:/opt/local/lib"' in linker_flag_arg
