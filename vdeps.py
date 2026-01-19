@@ -111,6 +111,7 @@ class Dependency:
         executables=None,
         extra_files=None,
         init_submodules=False,
+        library_paths=None,
     ):
         """
         :param name: Display name.
@@ -123,6 +124,7 @@ class Dependency:
                             Matches 'nvrhi-scomp' (Linux) or 'nvrhi-scomp.exe' (Windows).
         :param extra_files: List of specific filenames to find and copy to the tools directory (e.g. ['slangc.exe', 'slang.dll']).
         :param init_submodules: Whether to init git submodules.
+        :param library_paths: List of additional paths to add to LIB/LIBRARY_PATH for this dependency.
         """
         self.name = name
         self.rel_path = rel_path
@@ -131,6 +133,7 @@ class Dependency:
         self.executables = executables
         self.extra_files = extra_files
         self.init_submodules = init_submodules
+        self.library_paths = library_paths or []
 
 
 # --- Main Build Logic ---
@@ -222,21 +225,46 @@ def main():
             # Environment Setup
             build_env = env.copy()
 
+            # Resolve additional library paths
+            search_paths = [output_lib_dir]
+            for p in dep.library_paths:
+                if os.path.isabs(p):
+                    search_paths.append(p)
+                else:
+                    search_paths.append(os.path.join(root_dir, p))
+
+            # Create path string (e.g. "path1;path2" on Windows, "path1:path2" on Unix)
+            search_path_str = os.pathsep.join(search_paths)
+
             if IS_WINDOWS:
                 # Satisfies link.exe
-                build_env["LIB"] = f"{output_lib_dir};{build_env.get('LIB', '')}"
+                existing_lib = build_env.get("LIB", "")
+                build_env["LIB"] = (
+                    f"{search_path_str}{os.pathsep}{existing_lib}"
+                    if existing_lib
+                    else search_path_str
+                )
                 # Satisfies CMake find_library()
+                existing_cmake_lib = build_env.get("CMAKE_LIBRARY_PATH", "")
                 build_env["CMAKE_LIBRARY_PATH"] = (
-                    f"{output_lib_dir};{build_env.get('CMAKE_LIBRARY_PATH', '')}"
+                    f"{search_path_str}{os.pathsep}{existing_cmake_lib}"
+                    if existing_cmake_lib
+                    else search_path_str
                 )
             else:
                 # Satisfies gcc/clang
+                existing_lib_path = build_env.get("LIBRARY_PATH", "")
                 build_env["LIBRARY_PATH"] = (
-                    f"{output_lib_dir}:{build_env.get('LIBRARY_PATH', '')}"
+                    f"{search_path_str}{os.pathsep}{existing_lib_path}"
+                    if existing_lib_path
+                    else search_path_str
                 )
                 # Satisfies CMake find_library()
+                existing_cmake_lib = build_env.get("CMAKE_LIBRARY_PATH", "")
                 build_env["CMAKE_LIBRARY_PATH"] = (
-                    f"{output_lib_dir}:{build_env.get('CMAKE_LIBRARY_PATH', '')}"
+                    f"{search_path_str}{os.pathsep}{existing_cmake_lib}"
+                    if existing_cmake_lib
+                    else search_path_str
                 )
 
             # CMake Configure
