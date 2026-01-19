@@ -46,6 +46,7 @@ else:
     PLATFORM_TAG = "linux"
 
 LIB_EXT = ".lib" if IS_WINDOWS else ".a"
+VALID_PLATFORMS = {"win", "linux", "mac"}
 
 # --- Helpers ---
 
@@ -53,10 +54,72 @@ LIB_EXT = ".lib" if IS_WINDOWS else ".a"
 # NOTE: Change these in the script here if these are not correct for your system
 # (e.g. if you use a different compiler or build system)
 #
-def get_platform_cmake_args():
+def filter_platform_items(items):
+    """
+    Filters a list of items based on platform-specific prefix syntax.
+
+    Supported syntax:
+    - "platform:value" - only include if current platform matches
+    - "!platform:value" - only include if current platform does NOT match
+    - "platform1,platform2:value" - only include if current platform matches any
+    - "value" - include on all platforms (backward compatible)
+
+    Platform tags: win, linux, mac
+
+    :param items: List of strings with optional platform prefixes
+    :return: List of values that match the current platform
+    """
+    filtered = []
+
+    for item in items:
+        if ":" not in item:
+            filtered.append(item)
+            continue
+
+        parts = item.split(":", 1)
+        if len(parts) != 2:
+            filtered.append(item)
+            continue
+
+        platform_spec, value = parts
+        value = value.strip()  # Remove leading/trailing whitespace from value
+        include = False
+
+        if platform_spec.startswith("!"):
+            exclude_platforms = [p.strip() for p in platform_spec[1:].split(",")]
+
+            # Validate platform tags and warn about unknown ones
+            warned = set()
+            for platform in exclude_platforms:
+                if platform not in VALID_PLATFORMS and platform not in warned:
+                    print(f"Warning: Unknown platform tag '{platform}' in '{item}'")
+                    warned.add(platform)
+
+            if PLATFORM_TAG not in exclude_platforms:
+                include = True
+        else:
+            include_platforms = [p.strip() for p in platform_spec.split(",")]
+
+            # Validate platform tags and warn about unknown ones
+            warned = set()
+            for platform in include_platforms:
+                if platform not in VALID_PLATFORMS and platform not in warned:
+                    print(f"Warning: Unknown platform tag '{platform}' in '{item}'")
+                    warned.add(platform)
+
+            if PLATFORM_TAG in include_platforms:
+                include = True
+
+        if include:
+            filtered.append(value)
+
+    return filtered
+
+
+def get_platform_cmake_args(cxx_standard=20):
     """Returns CMake arguments specific to the current operating system."""
     common_args = [
-        "-DCMAKE_CXX_STANDARD=20",
+        f"-DCMAKE_CXX_STANDARD={cxx_standard}",
         "-DCMAKE_CXX_STANDARD_REQUIRED=ON",
     ]
 
@@ -112,6 +175,7 @@ class Dependency:
         extra_files=None,
         init_submodules=False,
         extra_link_dirs=None,
+        cxx_standard=20,
     ):
         """
         :param name: Display name.
@@ -125,6 +189,7 @@ class Dependency:
         :param extra_files: List of specific filenames to find and copy to the tools directory (e.g. ['slangc.exe', 'slang.dll']).
         :param init_submodules: Whether to init git submodules.
         :param extra_link_dirs: List of additional paths to add to linker search paths for this dependency.
+        :param cxx_standard: C++ standard version (e.g. 17, 20, 23). Default is 20.
         """
         self.name = name
         self.rel_path = rel_path
@@ -134,6 +199,7 @@ class Dependency:
         self.extra_files = extra_files
         self.init_submodules = init_submodules
         self.extra_link_dirs = extra_link_dirs or []
+        self.cxx_standard = cxx_standard
 
 
 # --- Main Build Logic ---
@@ -168,6 +234,8 @@ def main():
             print(f"Details: {e}")
             sys.exit(1)
 
+    temp_dir = toml_data.get("temp_dir", None)
+
     for dep in dependencies:
         dep_dir = os.path.join(deps_root_dir, dep.rel_path)
 
@@ -176,6 +244,16 @@ def main():
             continue
 
         print(f"\n=== Processing Dependency: {dep.name} ===")
+
+        # Apply platform filtering to arrays
+        dep.cmake_options = filter_platform_items(dep.cmake_options or [])
+        dep.libs = filter_platform_items(dep.libs or []) if dep.libs else None
+        dep.executables = (
+            filter_platform_items(dep.executables or []) if dep.executables else None
+        )
+        dep.extra_files = (
+            filter_platform_items(dep.extra_files or []) if dep.extra_files else None
+        )
 
         if dep.init_submodules:
             print(f"--- Initializing Submodules for {dep.name} ---")
@@ -206,7 +284,14 @@ def main():
 
             print(f"\n--- Building {dep.name} [{build_type}] ---")
 
-            build_dir = os.path.join(dep_dir, f"build_{config['name']}")
+            if temp_dir and temp_dir.strip():
+                build_dir = os.path.join(
+                    root_dir, temp_dir.strip(), f"{dep.name}_{config['name']}"
+                )
+                # Ensure temp_dir parent directory exists
+                os.makedirs(os.path.dirname(build_dir), exist_ok=True)
+            else:
+                build_dir = os.path.join(dep_dir, f"build_{config['name']}")
             output_lib_dir = os.path.join(
                 root_dir, "lib", f"{PLATFORM_TAG}_{config['name']}"
             )
@@ -228,7 +313,7 @@ def main():
             # CMake Configure
             cmake_args = (
                 ["cmake", "-S", ".", "-B", build_dir]
-                + get_platform_cmake_args()
+                + get_platform_cmake_args(cxx_standard=dep.cxx_standard)
                 + [f"-DCMAKE_BUILD_TYPE={build_type}"]
                 + dep.cmake_options
             )

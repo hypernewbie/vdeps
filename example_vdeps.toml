@@ -1,0 +1,101 @@
+# Example vdeps.toml demonstrating the new features
+
+# 1. Centralized Build Artifacts
+# Build directories will be created in "temp/" instead of inside each dependency folder
+temp_dir = "temp"
+
+# 2. Platform-Specific Configuration
+# Platform tags: win, linux, mac
+# Syntax:
+#   "platform:value" - include only on this platform
+#   "!platform:value" - exclude from this platform
+#   "platform1,platform2:value" - include on multiple platforms
+#   "value" - include on all platforms (backward compatible)
+
+[[dependency]]
+name = "nvrhi"
+rel_path = "nvrhi"
+init_submodules = true
+libs = ["nvrhi_vk", "rtxmu", "nvrhi"]
+cmake_options = [
+    # Common options (all platforms)
+    "-DNVRHI_INSTALL=OFF",
+    "-DNVRHI_WITH_RTXMU=ON",
+    "-DNVRHI_WITH_VALIDATION=ON",
+    "-DNVRHI_WITH_VULKAN=ON",
+    
+    # Platform-specific options
+    "win:-DNVRHI_WITH_DX11=OFF",
+    "win:-DNVRHI_WITH_DX12=OFF",
+    "win:-DNVRHI_WITH_NVAPI=OFF",
+    "win:-DRTXMU_WITH_D3D12=OFF",
+    
+    # Vulkan on all platforms except Windows
+    "!win:-DRTXMU_WITH_VULKAN=ON",
+    
+    # Common continue
+    "-DNVRHI_BUILD_SHARED=OFF",
+    "-DVULKAN_HEADERS_ENABLE_INSTALL=OFF",
+]
+
+# 3. Per-Dependency C++ Standard
+# Each dependency can specify its own C++ standard
+# If omitted, defaults to 20 (the previous default)
+
+[[dependency]]
+name = "ShaderMake"
+rel_path = "ShaderMake"
+init_submodules = true
+cxx_standard = 17  # Use C++17 for this dependency
+libs = ["ShaderMakeBlob", "slang", "slang-rt"]
+executables = ["ShaderMake", "slangc"]
+extra_files = [
+    # Platform-specific extra files
+    "win:slangc.exe", "win:slang.dll", "win:slang-glslang.dll", "win:slang-llvm.dll",
+    "linux:slangc", "linux:libslang.so", "linux:libslang-glslang.so", "linux:libslang-llvm.so",
+    "mac:slangc", "mac:libslang.dylib", "mac:libslang-glslang.dylib", "mac:libslang-llvm.dylib",
+    "mac:libslang-rt.dylib", "mac:libslang-glslang.dylib",
+    "linux:libslang-rt.so", "linux:libslang-glslang.so"
+]
+cmake_options = [
+    "-DSHADERMAKE_FIND_DXC=OFF",
+    "-DSHADERMAKE_FIND_DXC_VK=OFF",
+    "-DSHADERMAKE_FIND_FXC=OFF",
+    "-DSHADERMAKE_FIND_SLANG=ON",
+    "-DSHADERMAKE_FIND_COMPILERS=ON",
+    "-DSHADERMAKE_TOOL=OFF"
+]
+
+[[dependency]]
+name = "vk-bootstrap"
+rel_path = "vk-bootstrap"
+init_submodules = false
+# cxx_standard not specified - will use default (20)
+libs = ["vk-bootstrap"]
+cmake_options = [
+    "-DBUILD_SHARED_LIBS=OFF",
+    "-DGLFW_BUILD_TESTS=OFF",
+    "-DVK_BOOTSTRAP_TEST=OFF",
+    "-DVK_BOOTSTRAP_DISABLE_WARNINGS=ON",
+    "-DVK_BOOTSTRAP_INSTALL=OFF",
+    # Platform-specific MSVC runtime setting
+    "win:-DUSE_MSVC_RUNTIME_LIBRARY_DLL=OFF"
+]
+
+# Example: Multiple platform specification
+[[dependency]]
+name = "cross_platform_lib"
+rel_path = "cross_platform_lib"
+init_submodules = false
+cxx_standard = 20
+libs = ["cross_platform"]
+cmake_options = [
+    # Common to Linux and macOS
+    "linux,mac:-DUNIX_FEATURES=ON",
+    
+    # Windows only
+    "win:-DWINDOWS_FEATURES=ON",
+    
+    # All platforms
+    "-DCOMMON_FEATURE=ON"
+]

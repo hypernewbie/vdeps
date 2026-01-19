@@ -9,7 +9,7 @@ of trying to link the cmakes builds together directly. In the end you just want 
 
 ## Overview
 
-`vdeps.py` builds dependency libraries and tools defined in `vdeps.toml`, copying artifacts to `lib/` and `tools/` directories organized by platform and build configuration.
+`vdeps.py` builds dependency libraries and tools defined in `vdeps.toml`, copying artefacts to `lib/` and `tools/` directories organised by platform and build configuration.
 
 ## Usage
 
@@ -23,15 +23,21 @@ python vdeps.py
 Dependencies are configured in `vdeps.toml`:
 
 ```toml
+# Optional: centralise build artefacts
+temp_dir = "builds"
+
 [[dependency]]
 name = "nvrhi"
 rel_path = "nvrhi"
 init_submodules = true
+cxx_standard = 20
 libs = ["nvrhi_vk", "rtxmu", "nvrhi"]
 executables = []
 cmake_options = [
     "-DNVRHI_INSTALL=OFF",
-    "-DNVRHI_WITH_VULKAN=ON",
+    "win:-DNVRHI_WITH_DX11=OFF",
+    "linux,mac:-DNVRHI_WITH_VULKAN=ON",
+    "!win:-DNOT_WINDOWS=ON",
 ]
 ```
 
@@ -44,8 +50,14 @@ cmake_options = [
 | `libs` | Library base names to copy (e.g. `["nvrhi"]` matches `libnvrhi.a` or `nvrhi.lib`) |
 | `executables` | Executable base names to copy to tools directory |
 | `extra_files` | Specific filenames to copy (e.g. `["slangc.exe", "slang.dll"]`) |
-| `init_submodules` | Whether to initialize git submodules |
+| `init_submodules` | Whether to initialise git submodules |
 | `cmake_options` | List of CMake flags passed during configuration |
+| `cxx_standard` | C++ standard version (default: 20) |
+| `extra_link_dirs` | Additional linker search paths for this dependency |
+
+**Platform-specific syntax:** Use `win:`, `linux:`, `mac:` prefixes for platform-specific items in arrays. Negation with `!` and multiple platforms with commas: `"win,linux:-DFEATURE=ON"`, `"!win:-DNOT_WIN=ON"`.
+
+**Centralised builds:** Add `temp_dir = "builds"` at top-level to redirect build directories from `{dependency}/build_{config}` to `{temp_dir}/{name}_{config}`.
 
 ## Output Structure
 
@@ -65,7 +77,7 @@ root/
     └── win_release/
 ```
 
-## Platform-Specific Behavior
+## Platform-Specific Behaviour
 
 ### Linux/macOS
 - Generator: Ninja
