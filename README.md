@@ -16,6 +16,9 @@ of trying to link the cmakes builds together directly. In the end you just want 
 ```bash
 # Run the dependency build script
 python vdeps.py
+
+# Only build (skip project regeneration if build exists)
+python vdeps.py --build
 ```
 
 ## Configuration
@@ -84,6 +87,7 @@ root/
 - Compiler: Clang/Clang++
 - Library extension: `.a`
 - Executable extension: none
+- Warning suppression: `-w` (can be overridden via `cmake_options`)
 
 ### Windows
 - Generator: Visual Studio (MultiConfig)
@@ -91,6 +95,7 @@ root/
 - Library extension: `.lib`
 - Executable extension: `.exe`
 - Release builds use `RelWithDebInfo` for PDB files
+- Warning suppression: `/W0` (can be overridden via `cmake_options`)
 
 ## Testing
 

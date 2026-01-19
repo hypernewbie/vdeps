@@ -223,3 +223,61 @@ cmake_options = [
         assert dep.cmake_options == ["-DOPTION=ON"]
         assert dep.libs == ["test_lib"]
         assert dep.executables == ["test_exe"]
+
+
+class TestBuildFlagAndWarnings:
+    """Test the --build flag and Windows warning suppression features."""
+
+    @patch("vdeps.IS_WINDOWS", True)
+    def test_windows_warnings_disabled(self):
+        """Test that warning level is set to 0 (/W0) on Windows."""
+        args = vdeps.get_platform_cmake_args()
+
+        c_flags = [a for a in args if a.startswith("-DCMAKE_C_FLAGS=")][0]
+        cxx_flags = [a for a in args if a.startswith("-DCMAKE_CXX_FLAGS=")][0]
+
+        assert "/W0" in c_flags
+        assert "/W0" in cxx_flags
+
+    @patch("vdeps.IS_WINDOWS", False)
+    @patch("vdeps.IS_MACOS", False)
+    def test_unix_warnings_disabled(self):
+        """Test that warning level is set to -w on Unix-like systems."""
+        vdeps.PLATFORM_TAG = "linux"
+        args = vdeps.get_platform_cmake_args()
+
+        c_flags = [a for a in args if a.startswith("-DCMAKE_C_FLAGS=")][0]
+        cxx_flags = [a for a in args if a.startswith("-DCMAKE_CXX_FLAGS=")][0]
+
+        assert "-w" in c_flags
+        assert "-w" in cxx_flags
+
+    def test_build_flag_parsing(self):
+        """Test that --build flag is parsed correctly."""
+        import argparse
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--build", action="store_true")
+        args = parser.parse_args(["--build"])
+        assert args.build is True
+
+    def test_is_build_dir_valid_true(self, tmp_path):
+        """Test that valid build directory with CMakeCache is recognized."""
+        build_dir = tmp_path / "build"
+        build_dir.mkdir()
+        (build_dir / "CMakeCache.txt").write_text("test")
+
+        assert vdeps.is_build_dir_valid(str(build_dir)) is True
+
+    def test_is_build_dir_valid_false_missing_cache(self, tmp_path):
+        """Test that build directory without CMakeCache is not valid."""
+        build_dir = tmp_path / "build"
+        build_dir.mkdir()
+
+        assert vdeps.is_build_dir_valid(str(build_dir)) is False
+
+    def test_is_build_dir_valid_false_nonexistent(self, tmp_path):
+        """Test that non-existent directory is not valid."""
+        build_dir = tmp_path / "nonexistent"
+
+        assert vdeps.is_build_dir_valid(str(build_dir)) is False

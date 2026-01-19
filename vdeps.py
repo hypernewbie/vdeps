@@ -25,6 +25,7 @@ import shutil
 import glob
 import sys
 import platform
+import argparse
 
 try:
     import tomllib
@@ -116,6 +117,15 @@ def filter_platform_items(items):
     return filtered
 
 
+def is_build_dir_valid(build_dir):
+    """Check if build directory exists and contains CMake cache for building."""
+    try:
+        cmake_cache = os.path.join(build_dir, "CMakeCache.txt")
+        return os.path.exists(build_dir) and os.path.exists(cmake_cache)
+    except OSError:
+        return False
+
+
 def get_platform_cmake_args(cxx_standard=20):
     """Returns CMake arguments specific to the current operating system."""
     common_args = [
@@ -131,6 +141,9 @@ def get_platform_cmake_args(cxx_standard=20):
             # This requires CMake 3.15+ and CMP0091 set to NEW
             "-DCMAKE_POLICY_DEFAULT_CMP0091=NEW",
             "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>",
+            # Turn off all warnings
+            "-DCMAKE_C_FLAGS=/W0",
+            "-DCMAKE_CXX_FLAGS=/W0",
         ]
     else:
         # Unix-like flags (Clang + Ninja + libc++)
@@ -211,6 +224,14 @@ def main():
     env = os.environ.copy()
 
     print(f"Platform: {sys.platform} ({PLATFORM_TAG})")
+
+    parser = argparse.ArgumentParser(description="Build CMake dependencies")
+    parser.add_argument(
+        "--build",
+        action="store_true",
+        help="Only build without regenerating project (requires existing build directories)",
+    )
+    args, _ = parser.parse_known_args()
 
     # Load Dependencies from TOML
     toml_path = os.path.join(root_dir, "vdeps.toml")
@@ -349,7 +370,16 @@ def main():
                 update_flag(cmake_args, "-DCMAKE_EXE_LINKER_FLAGS", flags_str)
                 update_flag(cmake_args, "-DCMAKE_SHARED_LINKER_FLAGS", flags_str)
 
-            run_command(cmake_args, cwd=dep_dir, env=build_env)
+            # Check if we should skip configure (only run build)
+            if args.build and is_build_dir_valid(build_dir):
+                print(f"--- Skipping CMake configure for {dep.name} [{build_type}] ---")
+            else:
+                # Run configure (either not in --build mode or build dir doesn't exist)
+                if args.build:
+                    print(
+                        f"Warning: Build directory not valid at {build_dir}, running configure anyway..."
+                    )
+                run_command(cmake_args, cwd=dep_dir, env=build_env)
 
             # CMake Build
             # For Multi-Config generators (like VS), we must specify --config
@@ -451,7 +481,10 @@ def main():
             if copied_count == 0:
                 print(f"Warning: No artifacts copied for {dep.name} [{config['type']}]")
 
-    print("\n[SUCCESS] All dependencies processed.")
+    if args.build:
+        print("\n[SUCCESS] All dependencies built (configure skipped where possible).")
+    else:
+        print("\n[SUCCESS] All dependencies processed.")
 
 
 if __name__ == "__main__":
