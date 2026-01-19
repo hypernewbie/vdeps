@@ -126,6 +126,16 @@ def is_build_dir_valid(build_dir):
         return False
 
 
+def is_absolute_path(path):
+    """Checks if a path is absolute, supporting both Unix and Windows styles."""
+    if os.path.isabs(path):
+        return True
+    # Windows-style absolute path (e.g., C:\path or C:/path)
+    if len(path) >= 2 and path[1] == ":" and path[0].isalpha():
+        return True
+    return False
+
+
 def get_platform_cmake_args(cxx_standard=20):
     """Returns CMake arguments specific to the current operating system."""
     common_args = [
@@ -321,7 +331,7 @@ def main():
             # Resolve library paths for Linker Flags (Bypassing MSBuild env sanitization)
             link_dirs_abs = [output_lib_dir]
             for p in dep.extra_link_dirs:
-                if os.path.isabs(p):
+                if is_absolute_path(p):
                     link_dirs_abs.append(p)
                 else:
                     link_dirs_abs.append(os.path.join(root_dir, p))
@@ -403,7 +413,16 @@ def main():
 
                 # --- Libs ---
                 should_copy_lib = False
+                
+                is_lib_artifact = False
                 if ext in extensions:
+                    is_lib_artifact = True
+                elif not IS_WINDOWS:
+                    # Handle versioned shared libraries on Linux/Mac (e.g. .so.1 or .1.dylib)
+                    if ".so." in filename or (".dylib" in filename and filename.endswith(ext) and ext != ".dylib"):
+                        is_lib_artifact = True
+
+                if is_lib_artifact:
                     if dep.libs is None:
                         should_copy_lib = True
                     else:
@@ -411,6 +430,8 @@ def main():
                             if (
                                 name_no_ext == base_name
                                 or name_no_ext == f"lib{base_name}"
+                                or filename.startswith(f"lib{base_name}.so")
+                                or filename.startswith(f"{base_name}.so")
                             ):
                                 should_copy_lib = True
                                 break

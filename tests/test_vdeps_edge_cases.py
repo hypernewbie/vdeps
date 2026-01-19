@@ -117,3 +117,39 @@ def test_partial_artifact_match(mock_subproc, mock_shutil):
     assert 'fake_tool' in copy_sources, "Should copy matching tool"
     assert 'unrelated.a' not in copy_sources, "Should not copy unrelated lib"
     assert 'other_tool' not in copy_sources, "Should not copy unrelated tool"
+
+
+def test_versioned_shared_library_detection(mock_subproc, mock_shutil):
+    """
+    Test detection of versioned shared libraries on Linux (e.g. .so.1)
+    """
+    def mock_glob(pattern, recursive=False):
+        norm_pattern = pattern.replace('\\', '/')
+        if 'vdeps/fake_lib' in norm_pattern:
+            return [
+                '/path/to/fake_lib/build_debug/libfake_lib.so',
+                '/path/to/fake_lib/build_debug/libfake_lib.so.1',
+                '/path/to/fake_lib/build_debug/libfake_lib.so.1.2.3'
+            ]
+        return []
+
+    with patch('sys.platform', 'linux'), \
+         patch('vdeps.IS_WINDOWS', False), \
+         patch('vdeps.IS_MACOS', False), \
+         patch('vdeps.LIB_EXT', '.a'), \
+         patch('glob.glob', side_effect=mock_glob):
+
+        original_file = vdeps.__file__
+        vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
+
+        try:
+            vdeps.main()
+        finally:
+            vdeps.__file__ = original_file
+
+    # Verify all versioned .so files are copied
+    copy_sources = [os.path.basename(c[0][0]) for c in mock_shutil.call_args_list]
+    assert 'libfake_lib.so' in copy_sources
+    assert 'libfake_lib.so.1' in copy_sources, "Should copy versioned .so.1 libraries"
+    assert 'libfake_lib.so.1.2.3' in copy_sources, "Should copy versioned .so.1.2.3 libraries"
+    

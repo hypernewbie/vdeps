@@ -101,10 +101,10 @@ root/
 
 ```bash
 # Run all tests
-python -m pytest tests/ -v
+./venv/bin/python -m pytest tests/ -v
 
 # Or with coverage
-python -m pytest tests/ -v --cov=vdeps
+./venv/bin/python -m pytest tests/ -v --cov=vdeps
 ```
 
 The test suite uses functional CMake projects with a Python artefact generator (`tests/fixtures/vdeps/gen_artifact.py`). These mock projects build quickly and test platform-specific behaviour, error handling, and configuration options without requiring actual C++ compilation.
