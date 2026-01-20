@@ -309,7 +309,8 @@ def test_filtering_with_build_flag(mock_subproc, mock_shutil):
     with patch('sys.platform', 'linux'), \
          patch('glob.glob', side_effect=mock_glob), \
          patch('sys.argv', ['vdeps.py', 'fake_lib', '--build']), \
-         patch('os.path.exists', side_effect=lambda path: 'CMakeCache.txt' in path or 'fake_lib' in path or 'fake_tool' in path), \
+         patch('os.path.exists', side_effect=lambda path: 'vdeps.toml' in path or 'CMakeCache.txt' in path or 'fake_lib' in path or 'fake_tool' in path or FIXTURES_DIR + '/lib' in path), \
+         patch('os.makedirs'), \
          patch('vdeps.IS_WINDOWS', False), \
          patch('vdeps.LIB_EXT', '.a'):
         original_file = vdeps.__file__
