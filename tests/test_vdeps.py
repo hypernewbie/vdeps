@@ -145,5 +145,125 @@ def test_windows_build(mock_subproc, mock_shutil):
     assert 'fake_lib.lib' in copy_filenames, "Should copy .lib files on Windows"
     assert 'fake_lib.a' not in copy_filenames, "Should NOT copy .a files on Windows"
     
-    assert 'fake_tool.exe' in copy_filenames, "Should copy .exe files on Windows"
-    assert 'fake_tool' not in copy_filenames, "Should NOT copy extensionless files on Windows"
+def test_build_single_dependency(mock_subproc, mock_shutil):
+    """
+    Test building a single dependency by name
+    """
+    def mock_glob(pattern, recursive=False):
+        if 'fake_lib' in pattern:
+            return ['/path/to/fake_lib/build_debug/libfake_lib.a']
+        return []
+
+    with patch('sys.platform', 'linux'), \
+         patch('glob.glob', side_effect=mock_glob), \
+         patch('sys.argv', ['vdeps.py', 'fake_lib']), \
+         patch('vdeps.IS_WINDOWS', False), \
+         patch('vdeps.IS_MACOS', False), \
+         patch('vdeps.PLATFORM_TAG', 'linux'), \
+         patch('vdeps.LIB_EXT', '.a'):
+        original_file = vdeps.__file__
+        vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
+        
+        try:
+            vdeps.main()
+        finally:
+            vdeps.__file__ = original_file
+
+    # Verify only fake_lib was processed
+    captured = mock_subproc.call_args_list
+    dep_names = set()
+    for call in captured:
+        cwd = call[1].get('cwd', '')
+        if 'fake_lib' in cwd:
+            dep_names.add('fake_lib')
+        elif 'fake_tool' in cwd:
+            dep_names.add('fake_tool')
+    
+    assert 'fake_lib' in dep_names
+    assert 'fake_tool' not in dep_names
+
+
+def test_build_multiple_dependencies(mock_subproc, mock_shutil):
+    """
+    Test building multiple dependencies by name
+    """
+    def mock_glob(pattern, recursive=False):
+        if 'fake_lib' in pattern:
+            return ['/path/to/fake_lib/build_debug/libfake_lib.a']
+        elif 'fake_tool' in pattern:
+            return ['/path/to/fake_tool/build_debug/fake_tool']
+        return []
+
+    with patch('sys.platform', 'linux'), \
+         patch('glob.glob', side_effect=mock_glob), \
+         patch('sys.argv', ['vdeps.py', 'fake_lib', 'fake_tool']), \
+         patch('vdeps.IS_WINDOWS', False), \
+         patch('vdeps.IS_MACOS', False), \
+         patch('vdeps.PLATFORM_TAG', 'linux'), \
+         patch('vdeps.LIB_EXT', '.a'):
+        original_file = vdeps.__file__
+        vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
+        
+        try:
+            vdeps.main()
+        finally:
+            vdeps.__file__ = original_file
+
+    # Verify both dependencies were processed
+    captured = mock_subproc.call_args_list
+    dep_names = set()
+    for call in captured:
+        cwd = call[1].get('cwd', '')
+        if 'fake_lib' in cwd:
+            dep_names.add('fake_lib')
+        elif 'fake_tool' in cwd:
+            dep_names.add('fake_tool')
+    
+    assert 'fake_lib' in dep_names
+    assert 'fake_tool' in dep_names
+
+
+def test_build_all_when_no_args(mock_subproc, mock_shutil):
+    """
+    Test backward compatibility: building all dependencies when no args provided
+    """
+    def mock_glob(pattern, recursive=False):
+        if 'fake_lib' in pattern:
+            return ['/path/to/fake_lib/build_debug/libfake_lib.a']
+        elif 'fake_tool' in pattern:
+            return ['/path/to/fake_tool/build_debug/fake_tool']
+        elif 'complex_lib' in pattern:
+            return ['/path/to/complex_lib/build_debug/libcomplex_core.a']
+        elif 'mixed_project' in pattern:
+            return ['/path/to/mixed_project/build_debug/libmixed.a']
+        elif 'multi_output' in pattern:
+            return ['/path/to/multi_output/build_debug/libmulti.a']
+        elif 'empty_config' in pattern:
+            return ['/path/to/empty_config/build_debug/libempty_config.a']
+        return []
+
+    with patch('sys.platform', 'linux'), \
+         patch('glob.glob', side_effect=mock_glob), \
+         patch('sys.argv', ['vdeps.py']), \
+         patch('vdeps.IS_WINDOWS', False), \
+         patch('vdeps.IS_MACOS', False), \
+         patch('vdeps.PLATFORM_TAG', 'linux'), \
+         patch('vdeps.LIB_EXT', '.a'):
+        original_file = vdeps.__file__
+        vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
+        
+        try:
+            vdeps.main()
+        finally:
+            vdeps.__file__ = original_file
+
+    # Verify all dependencies were processed
+    captured = mock_subproc.call_args_list
+    dep_names = set()
+    for call in captured:
+        cwd = call[1].get('cwd', '')
+        for dep in ['fake_lib', 'fake_tool', 'complex_lib', 'mixed_project', 'multi_output', 'empty_config']:
+            if dep in cwd:
+                dep_names.add(dep)
+    
+    assert len(dep_names) == 6

@@ -240,7 +240,20 @@ def main():
         action="store_true",
         help="Only build without regenerating project (requires existing build directories)",
     )
-    args, _ = parser.parse_known_args()
+    parser.add_argument(
+        "dependencies",
+        nargs="*",
+        help="Optional list of dependency names to build (case-insensitive)",
+    )
+    args, unknown = parser.parse_known_args()
+
+    # Only error on unknown arguments that start with our expected flag patterns
+    # Pytest passes -v for verbose, which we should allow
+    if unknown and any(arg.startswith(("--", "-")) for arg in unknown):
+        # Filter out common test/debug flags that shouldn't cause errors
+        filtered_unknown = [arg for arg in unknown if arg not in ['-v', '--verbose']]
+        if filtered_unknown:
+            parser.error(f"unrecognized arguments: {' '.join(filtered_unknown)}")
 
     # Load Dependencies from TOML
     toml_path = os.path.join(root_dir, "vdeps.toml")
@@ -266,6 +279,38 @@ def main():
 
     temp_dir = toml_data.get("temp_dir", None)
 
+    if args.dependencies:
+        # Validate dependency names: trim whitespace and filter valid names
+        requested_names = []
+        for name in args.dependencies:
+            stripped = name.strip()
+            if stripped:
+                # Validate against common invalid characters
+                if any(char in stripped for char in ['/', '\\', ':', '*', '?', '"', '<', '>', '|']):
+                    print(f"Error: Invalid dependency name '{stripped}' - contains invalid characters")
+                    sys.exit(1)
+                requested_names.append(stripped)
+        
+        if not requested_names:
+            print("Error: No valid dependency names provided after stripping whitespace")
+            sys.exit(1)
+        
+        requested_lower = {name.lower() for name in requested_names}
+        available_lower = {dep.name.lower() for dep in dependencies}
+        
+        missing = requested_lower - available_lower
+        if missing:
+            for name in missing:
+                print(f"Error: Dependency '{name}' not found in vdeps.toml")
+            sys.exit(1)
+        
+        dependencies = [dep for dep in dependencies if dep.name.lower() in requested_lower]
+        
+        print(f"Building selected dependencies: {', '.join(dep.name for dep in dependencies)}")
+    else:
+        print(f"Building all dependencies")
+
+    built_names = []
     for dep in dependencies:
         dep_dir = os.path.join(deps_root_dir, dep.rel_path)
 
@@ -273,6 +318,7 @@ def main():
             print(f"Error: Directory for {dep.name} not found at {dep_dir}")
             continue
 
+        built_names.append(dep.name)
         print(f"\n=== Processing Dependency: {dep.name} ===")
 
         # Apply platform filtering to arrays
@@ -482,9 +528,9 @@ def main():
                 print(f"Warning: No artifacts copied for {dep.name} [{config['type']}]")
 
     if args.build:
-        print("\n[SUCCESS] All dependencies built (configure skipped where possible).")
+        print(f"\n[SUCCESS] Built dependencies (configure skipped where possible): {', '.join(built_names)}")
     else:
-        print("\n[SUCCESS] All dependencies processed.")
+        print(f"\n[SUCCESS] Processed dependencies: {', '.join(built_names)}")
 
 
 if __name__ == "__main__":

@@ -84,7 +84,8 @@ def test_no_artifacts_found(mock_subproc, mock_shutil, capsys):
     """
     # Mock glob to return empty (no artifacts)
     with patch('sys.platform', 'linux'), \
-         patch('glob.glob', return_value=[]):
+         patch('glob.glob', return_value=[]), \
+         patch('sys.argv', ['vdeps.py']):
         
         original_file = vdeps.__file__
         vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
@@ -94,6 +95,62 @@ def test_no_artifacts_found(mock_subproc, mock_shutil, capsys):
             captured = capsys.readouterr()
             # Should print warnings but not exit
             assert "Warning: No artifacts copied" in captured.out
-            assert "[SUCCESS] All dependencies processed" in captured.out
+            assert "[SUCCESS] Processed dependencies:" in captured.out
+        finally:
+            vdeps.__file__ = original_file
+def test_error_on_single_missing_dependency(mock_subproc, mock_shutil):
+    """
+    Test that requesting a non-existent dependency exits with error
+    """
+    with patch('sys.platform', 'linux'), \
+         patch('sys.argv', ['vdeps.py', 'nonexistent_dep']):
+        
+        original_file = vdeps.__file__
+        vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
+        
+        try:
+            vdeps.main()
+            assert False, "Should have exited with error"
+        except SystemExit as e:
+            assert e.code == 1, "Should exit with error code 1"
+        finally:
+            vdeps.__file__ = original_file
+
+
+def test_error_on_multiple_missing_dependencies(mock_subproc, mock_shutil):
+    """
+    Test that requesting multiple non-existent dependencies exits with error
+    """
+    with patch('sys.platform', 'linux'), \
+         patch('sys.argv', ['vdeps.py', 'dep1', 'dep2', 'dep3']):
+        
+        original_file = vdeps.__file__
+        vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
+        
+        try:
+            vdeps.main()
+            assert False, "Should have exited with error"
+        except SystemExit as e:
+            assert e.code == 1, "Should exit with error code 1"
+        finally:
+            vdeps.__file__ = original_file
+
+
+def test_error_partial_match_does_not_work(mock_subproc, mock_shutil):
+    """
+    Test that partial name matching doesn't work (exact name required)
+    """
+    # fake_lib exists, but "fake" is only a partial match
+    with patch('sys.platform', 'linux'), \
+         patch('sys.argv', ['vdeps.py', 'fake']):
+        
+        original_file = vdeps.__file__
+        vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
+        
+        try:
+            vdeps.main()
+            assert False, "Should have exited with error for partial match"
+        except SystemExit as e:
+            assert e.code == 1, "Should exit with error code 1"
         finally:
             vdeps.__file__ = original_file

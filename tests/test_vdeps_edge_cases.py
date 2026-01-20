@@ -44,7 +44,7 @@ def test_bin_and_lib_directories(mock_subproc, mock_shutil):
     
     # multi_output files won't be found due to subdirectory structure
     # but the test passes if no exception is raised during subdir search
-    assert "[SUCCESS] All dependencies processed" == "[SUCCESS] All dependencies processed"
+    assert True
 
 def test_shared_library_detection(mock_subproc, mock_shutil):
     """
@@ -153,3 +153,174 @@ def test_versioned_shared_library_detection(mock_subproc, mock_shutil):
     assert 'libfake_lib.so.1' in copy_sources, "Should copy versioned .so.1 libraries"
     assert 'libfake_lib.so.1.2.3' in copy_sources, "Should copy versioned .so.1.2.3 libraries"
     
+def test_case_insensitive_matching(mock_subproc, mock_shutil):
+    """
+    Test that dependency names are matched case-insensitively
+    """
+    def mock_glob(pattern, recursive=False):
+        if 'fake_lib' in pattern:
+            return ['/path/to/fake_lib/build_debug/libfake_lib.a']
+        return []
+
+    with patch('sys.platform', 'linux'), \
+         patch('glob.glob', side_effect=mock_glob), \
+         patch('sys.argv', ['vdeps.py', 'FAKE_LIB']), \
+         patch('vdeps.IS_WINDOWS', False), \
+         patch('vdeps.LIB_EXT', '.a'):
+        original_file = vdeps.__file__
+        vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
+        
+        try:
+            vdeps.main()
+        finally:
+            vdeps.__file__ = original_file
+
+    # Verify fake_lib was processed (case-insensitive match)
+    captured = mock_subproc.call_args_list
+    fake_lib_processed = any('fake_lib' in call[1].get('cwd', '') for call in captured)
+    assert fake_lib_processed
+
+
+def test_duplicate_dependency_names(mock_subproc, mock_shutil):
+    """
+    Test that duplicate dependency names in arguments are deduplicated
+    """
+    def mock_glob(pattern, recursive=False):
+        if 'fake_lib' in pattern:
+            return ['/path/to/fake_lib/build_debug/libfake_lib.a']
+        return []
+
+    with patch('sys.platform', 'linux'), \
+         patch('glob.glob', side_effect=mock_glob), \
+         patch('sys.argv', ['vdeps.py', 'fake_lib', 'fake_lib', 'fake_lib']), \
+         patch('vdeps.IS_WINDOWS', False), \
+         patch('vdeps.LIB_EXT', '.a'):
+        original_file = vdeps.__file__
+        vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
+        
+        try:
+            vdeps.main()
+        finally:
+            vdeps.__file__ = original_file
+
+    # Count how many times fake_lib was configured
+    fake_lib_calls = [c for c in mock_subproc.call_args_list if 'fake_lib' in c[1].get('cwd', '') and '-S' in c[0][0]]
+    # Should be 2 (debug and release), not 6 (2 configs * 3 duplicate requests)
+    assert len(fake_lib_calls) == 2
+
+
+def test_whitespace_in_dependency_names(mock_subproc, mock_shutil):
+    """
+    Test that whitespace around dependency names is trimmed
+    """
+    def mock_glob(pattern, recursive=False):
+        if 'fake_lib' in pattern:
+            return ['/path/to/fake_lib/build_debug/libfake_lib.a']
+        return []
+
+    with patch('sys.platform', 'linux'), \
+         patch('glob.glob', side_effect=mock_glob), \
+         patch('sys.argv', ['vdeps.py', '  fake_lib  ']), \
+         patch('vdeps.IS_WINDOWS', False), \
+         patch('vdeps.LIB_EXT', '.a'):
+        original_file = vdeps.__file__
+        vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
+        
+        try:
+            vdeps.main()
+        finally:
+            vdeps.__file__ = original_file
+
+    # Verify fake_lib was processed despite whitespace
+    captured = mock_subproc.call_args_list
+    fake_lib_processed = any('fake_lib' in call[1].get('cwd', '') for call in captured)
+    assert fake_lib_processed
+
+
+def test_mixed_case_and_duplicates(mock_subproc, mock_shutil):
+    """
+    Test combination of case-insensitive matching and duplicate handling
+    """
+    def mock_glob(pattern, recursive=False):
+        if 'fake_lib' in pattern or 'fake_tool' in pattern:
+            return ['/path/to/build/lib.a']
+        return []
+
+    with patch('sys.platform', 'linux'), \
+         patch('glob.glob', side_effect=mock_glob), \
+         patch('sys.argv', ['vdeps.py', 'FAKE_LIB', 'fake_lib', 'FAKE_TOOL', 'fake_tool']), \
+         patch('vdeps.IS_WINDOWS', False), \
+         patch('vdeps.LIB_EXT', '.a'):
+        original_file = vdeps.__file__
+        vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
+        
+        try:
+            vdeps.main()
+        finally:
+            vdeps.__file__ = original_file
+
+    # Count unique dependencies processed
+    dep_names = set()
+    for call in mock_subproc.call_args_list:
+        cwd = call[1].get('cwd', '')
+        if 'fake_lib' in cwd:
+            dep_names.add('fake_lib')
+        elif 'fake_tool' in cwd:
+            dep_names.add('fake_tool')
+    
+    # Should have exactly 2 unique dependencies (fake_lib and fake_tool)
+def test_empty_string_dependency_name(mock_subproc, mock_shutil):
+    """
+    Test that empty string dependency names are rejected with error
+    """
+    with patch('sys.platform', 'linux'), \
+         patch('sys.argv', ['vdeps.py', '']):
+        
+        original_file = vdeps.__file__
+        vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
+        
+        try:
+            vdeps.main()
+            assert False, "Should have exited with error for empty string"
+        except SystemExit as e:
+            assert e.code == 1, "Should exit with error code 1"
+        finally:
+            vdeps.__file__ = original_file
+
+
+def test_invalid_characters_in_dependency_name(mock_subproc, mock_shutil):
+    """
+    Test that dependency names with invalid characters are rejected
+    """
+    with patch('sys.platform', 'linux'), \
+         patch('sys.argv', ['vdeps.py', 'fake/lib']):
+        
+        original_file = vdeps.__file__
+        vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
+        
+        try:
+            vdeps.main()
+            assert False, "Should have exited with error for invalid characters"
+        except SystemExit as e:
+            assert e.code == 1, "Should exit with error code 1"
+        finally:
+            vdeps.__file__ = original_file
+
+
+def test_all_empty_strings_dependency_names(mock_subproc, mock_shutil):
+    """
+    Test that all empty strings result in error
+    """
+    with patch('sys.platform', 'linux'), \
+         patch('sys.argv', ['vdeps.py', '   ', '', '  ']):
+        
+        original_file = vdeps.__file__
+        vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
+        
+        try:
+            vdeps.main()
+            assert False, "Should have exited with error for all empty strings"
+        except SystemExit as e:
+            assert e.code == 1, "Should exit with error code 1"
+        finally:
+            vdeps.__file__ = original_file

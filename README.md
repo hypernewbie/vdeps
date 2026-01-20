@@ -19,6 +19,12 @@ python vdeps.py
 
 # Only build (skip project regeneration if build exists)
 python vdeps.py --build
+
+# Build specific dependencies by name
+python vdeps.py nvrhi assimp
+
+# Build specific dependencies with --build flag
+python vdeps.py nvrhi --build
 ```
 
 ## Configuration

@@ -7,6 +7,19 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 import vdeps
 
+FIXTURES_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), 'fixtures'))
+
+@pytest.fixture
+def mock_subproc():
+    with patch('subprocess.run') as mock:
+        mock.return_value.returncode = 0
+        yield mock
+
+@pytest.fixture
+def mock_shutil():
+    with patch('shutil.copy2') as mock:
+        yield mock
+
 
 class TestPlatformFiltering:
     """Test the filter_platform_items() function with various syntax patterns."""
@@ -281,3 +294,117 @@ class TestBuildFlagAndWarnings:
         build_dir = tmp_path / "nonexistent"
 
         assert vdeps.is_build_dir_valid(str(build_dir)) is False
+
+def test_filtering_with_build_flag(mock_subproc, mock_shutil):
+    """
+    Test that --build flag works with dependency filtering
+    """
+    def mock_glob(pattern, recursive=False):
+        if 'fake_lib' in pattern:
+            return ['/path/to/fake_lib/build_debug/libfake_lib.a']
+        return []
+
+    # Mock build directory as valid (existing with CMakeCache.txt)
+    # This will cause configure to be skipped when --build is used
+    with patch('sys.platform', 'linux'), \
+         patch('glob.glob', side_effect=mock_glob), \
+         patch('sys.argv', ['vdeps.py', 'fake_lib', '--build']), \
+         patch('os.path.exists', side_effect=lambda path: 'CMakeCache.txt' in path or 'fake_lib' in path or 'fake_tool' in path), \
+         patch('vdeps.IS_WINDOWS', False), \
+         patch('vdeps.LIB_EXT', '.a'):
+        original_file = vdeps.__file__
+        vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
+        
+        try:
+            vdeps.main()
+            captured = mock_subproc.call_args_list
+            # Find configure calls for fake_lib
+            configure_calls = [c for c in captured if 'fake_lib' in c[1].get('cwd', '') and '-S' in c[0][0]]
+            # With --build and valid build dir, configure should be skipped
+            assert len(configure_calls) == 0, "Configure should be skipped with --build flag"
+        finally:
+            vdeps.__file__ = original_file
+
+
+def test_filtering_skips_unrequested_dependencies(mock_subproc, mock_shutil):
+    """
+    Test that only requested dependencies are built when using filtering
+    """
+    def mock_glob(pattern, recursive=False):
+        if 'fake_lib' in pattern:
+            return ['/path/to/fake_lib/build_debug/libfake_lib.a']
+        elif 'fake_tool' in pattern:
+            return ['/path/to/fake_tool/build_debug/fake_tool']
+        return []
+
+    with patch('sys.platform', 'linux'), \
+         patch('glob.glob', side_effect=mock_glob), \
+         patch('sys.argv', ['vdeps.py', 'fake_lib']), \
+         patch('vdeps.IS_WINDOWS', False), \
+         patch('vdeps.LIB_EXT', '.a'):
+        original_file = vdeps.__file__
+        vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
+        
+        try:
+            vdeps.main()
+        finally:
+            vdeps.__file__ = original_file
+
+    # Count how many times each dependency was processed
+    dep_names = set()
+    for call in mock_subproc.call_args_list:
+        cwd = call[1].get('cwd', '')
+        if 'fake_lib' in cwd:
+            dep_names.add('fake_lib')
+        elif 'fake_tool' in cwd:
+            dep_names.add('fake_tool')
+    
+    # Should only have fake_lib, not fake_tool
+    assert 'fake_lib' in dep_names
+    assert 'fake_tool' not in dep_names, "Unrequested dependency should not be built"
+
+
+def test_order_preservation(mock_subproc, mock_shutil):
+    """
+    Test that dependencies are built in TOML order, not request order
+    """
+    def mock_glob(pattern, recursive=False):
+        if 'complex_lib' in pattern:
+            return ['/path/to/complex_lib/build_debug/libcomplex_core.a']
+        elif 'fake_lib' in pattern:
+            return ['/path/to/fake_lib/build_debug/libfake_lib.a']
+        elif 'fake_tool' in pattern:
+            return ['/path/to/fake_tool/build_debug/fake_tool']
+        return []
+
+    # Request in different order than TOML (fake_tool, fake_lib, complex_lib)
+    # TOML order is: fake_lib, fake_tool, complex_lib, mixed_project, multi_output, empty_config
+    with patch('sys.platform', 'linux'), \
+         patch('glob.glob', side_effect=mock_glob), \
+         patch('sys.argv', ['vdeps.py', 'fake_tool', 'complex_lib', 'fake_lib']), \
+         patch('vdeps.IS_WINDOWS', False), \
+         patch('vdeps.LIB_EXT', '.a'):
+        original_file = vdeps.__file__
+        vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
+        
+        try:
+            vdeps.main()
+        finally:
+            vdeps.__file__ = original_file
+
+    # Get the order of dependencies by checking cwd in calls
+    dep_order = []
+    for call in mock_subproc.call_args_list:
+        cwd = call[1].get('cwd', '')
+        if 'fake_lib' in cwd and 'fake_lib' not in dep_order:
+            dep_order.append('fake_lib')
+        elif 'fake_tool' in cwd and 'fake_tool' not in dep_order:
+            dep_order.append('fake_tool')
+        elif 'complex_lib' in cwd and 'complex_lib' not in dep_order:
+            dep_order.append('complex_lib')
+    
+    # Should preserve TOML order: fake_lib first, then fake_tool, then complex_lib
+    assert len(dep_order) == 3
+    assert dep_order[0] == 'fake_lib', f"Expected fake_lib first in TOML order, got {dep_order}"
+    assert dep_order[1] == 'fake_tool', f"Expected fake_tool second in TOML order, got {dep_order}"
+    assert dep_order[2] == 'complex_lib', f"Expected complex_lib third in TOML order, got {dep_order}"
