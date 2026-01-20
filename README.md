@@ -14,18 +14,18 @@ of trying to link the cmakes builds together directly. In the end you just want 
 ## Usage
 
 ```bash
-# Run the dependency build script
+# Build all dependencies
 python vdeps.py
 
-# Only build (skip project regeneration if build exists)
-python vdeps.py --build
-
-# Build specific dependencies by name
+# Build specific dependencies by name (case-insensitive)
 python vdeps.py nvrhi assimp
 
-# Build specific dependencies with --build flag
+# Skip project regeneration if build exists (--build flag)
+python vdeps.py --build
 python vdeps.py nvrhi --build
 ```
+
+**Dependency selection:** Build specific dependencies by name. Names are case-insensitive and must match entries in `vdeps.toml`. Invalid characters are rejected.
 
 ## Configuration
 
@@ -53,7 +53,7 @@ cmake_options = [
 
 | Field | Description |
 |-------|-------------|
-| `name` | Display name for logging |
+| `name` | Display name for logging and selective building |
 | `rel_path` | Relative path to dependency in `vdeps/` directory |
 | `libs` | Library base names to copy (e.g. `["nvrhi"]` matches `libnvrhi.a` or `nvrhi.lib`) |
 | `executables` | Executable base names to copy to tools directory |
