@@ -198,6 +198,7 @@ class Dependency:
         extra_files=None,
         extra_link_dirs=None,
         cxx_standard=20,
+        build_by_default=True,
     ):
         """
         :param name: Display name.
@@ -212,6 +213,7 @@ class Dependency:
 
         :param extra_link_dirs: List of additional paths to add to linker search paths for this dependency.
         :param cxx_standard: C++ standard version (e.g. 17, 20, 23). Default is 20.
+        :param build_by_default: If True, this dependency is built when running vdeps without arguments. Default is True.
         """
         self.name = name
         self.rel_path = rel_path
@@ -222,6 +224,7 @@ class Dependency:
 
         self.extra_link_dirs = extra_link_dirs or []
         self.cxx_standard = cxx_standard
+        self.build_by_default = build_by_default
 
 
 # --- Main Build Logic ---
@@ -308,7 +311,8 @@ def main():
         
         print(f"Building selected dependencies: {', '.join(dep.name for dep in dependencies)}")
     else:
-        print(f"Building all dependencies")
+        dependencies = [dep for dep in dependencies if dep.build_by_default]
+        print(f"Building all default dependencies")
 
     built_names = []
     for dep in dependencies:
