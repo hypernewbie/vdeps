@@ -18,7 +18,20 @@ def mock_shutil():
     with patch('shutil.copy2') as mock:
         yield mock
 
-def test_build_by_default_false_skipped(mock_subproc, mock_shutil):
+@pytest.fixture
+def mock_open_toml():
+    original_open = open
+    
+    def side_effect(file, *args, **kwargs):
+        # Check if we're opening vdeps.toml (handling potential path variations)
+        if "vdeps.toml" in str(file):
+            return MagicMock()
+        return original_open(file, *args, **kwargs)
+        
+    with patch('builtins.open', side_effect=side_effect):
+        yield
+
+def test_build_by_default_false_skipped(mock_subproc, mock_shutil, mock_open_toml):
     """
     Test that dependencies with build_by_default = False are skipped when running without args.
     """
@@ -42,7 +55,6 @@ def test_build_by_default_false_skipped(mock_subproc, mock_shutil):
 
     with (
         patch('vdeps.tomllib.load', return_value=mock_toml_data),
-        patch('builtins.open', MagicMock()),
         patch('os.path.exists', return_value=True),
         patch('sys.argv', ['vdeps.py']),
         patch('glob.glob', return_value=[]),
@@ -62,7 +74,7 @@ def test_build_by_default_false_skipped(mock_subproc, mock_shutil):
             # Verify OptionalDep is NOT built
             assert not any("Processing Dependency: OptionalDep" in line for line in printed_lines)
 
-def test_build_by_default_false_explicitly_requested(mock_subproc, mock_shutil):
+def test_build_by_default_false_explicitly_requested(mock_subproc, mock_shutil, mock_open_toml):
     """
     Test that dependencies with build_by_default = False are built when explicitly requested.
     """
@@ -86,7 +98,6 @@ def test_build_by_default_false_explicitly_requested(mock_subproc, mock_shutil):
 
     with (
         patch('vdeps.tomllib.load', return_value=mock_toml_data),
-        patch('builtins.open', MagicMock()),
         patch('os.path.exists', return_value=True),
         patch('sys.argv', ['vdeps.py', 'OptionalDep']),
         patch('glob.glob', return_value=[]),
@@ -106,7 +117,7 @@ def test_build_by_default_false_explicitly_requested(mock_subproc, mock_shutil):
             # Verify DefaultDep is NOT built (since we requested specific one)
             assert not any("Processing Dependency: DefaultDep" in line for line in printed_lines)
 
-def test_build_by_default_implicit_true(mock_subproc, mock_shutil):
+def test_build_by_default_implicit_true(mock_subproc, mock_shutil, mock_open_toml):
     """
     Test that dependencies default to build_by_default = True if not specified.
     """
@@ -123,7 +134,6 @@ def test_build_by_default_implicit_true(mock_subproc, mock_shutil):
 
     with (
         patch('vdeps.tomllib.load', return_value=mock_toml_data),
-        patch('builtins.open', MagicMock()),
         patch('os.path.exists', return_value=True),
         patch('sys.argv', ['vdeps.py']),
         patch('glob.glob', return_value=[]),
