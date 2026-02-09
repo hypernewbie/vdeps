@@ -61,6 +61,17 @@ cmake_options = [
 | `cmake_options` | List of CMake flags passed during configuration |
 | `cxx_standard` | C++ standard version (default: 20) |
 | `extra_link_dirs` | Additional linker search paths for this dependency |
+| `build` | If `false`, skips CMake configure and build steps (default: `true`) |
+| `install` | List of custom copy rules (see below) |
+
+**Install Rules:** Use `install` to copy files matching a glob pattern to a target directory (`lib` or `tools`).
+
+```toml
+install = [
+    { pattern = "bin/*.dll", target = "tools" },
+    { pattern = "data/**/*", target = "tools/data" }
+]
+```
 
 **Platform-specific syntax:** Use `win:`, `linux:`, `mac:` prefixes for platform-specific items in arrays. Negation with `!` and multiple platforms with commas: `"win,linux:-DFEATURE=ON"`, `"!win:-DNOT_WIN=ON"`.
 

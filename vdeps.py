@@ -199,6 +199,8 @@ class Dependency:
         extra_link_dirs=None,
         cxx_standard=20,
         build_by_default=True,
+        build=True,
+        install=None,
     ):
         """
         :param name: Display name.
@@ -214,6 +216,8 @@ class Dependency:
         :param extra_link_dirs: List of additional paths to add to linker search paths for this dependency.
         :param cxx_standard: C++ standard version (e.g. 17, 20, 23). Default is 20.
         :param build_by_default: If True, this dependency is built when running vdeps without arguments. Default is True.
+        :param build: If True, run CMake configure and build steps. Default is True.
+        :param install: List of install rules. Each rule is a dict with 'pattern' and 'target' (e.g. {'pattern': 'bin/*.dll', 'target': 'tools'}).
         """
         self.name = name
         self.rel_path = rel_path
@@ -225,6 +229,8 @@ class Dependency:
         self.extra_link_dirs = extra_link_dirs or []
         self.cxx_standard = cxx_standard
         self.build_by_default = build_by_default
+        self.build = build
+        self.install = install
 
 
 # --- Main Build Logic ---
@@ -362,7 +368,7 @@ def main():
             if not os.path.exists(output_lib_dir):
                 os.makedirs(output_lib_dir)
 
-            if (dep.executables or dep.extra_files) and not os.path.exists(
+            if (dep.executables or dep.extra_files or dep.install) and not os.path.exists(
                 output_tools_dir
             ):
                 os.makedirs(output_tools_dir)
@@ -370,76 +376,84 @@ def main():
             # Environment Setup
             build_env = env.copy()
 
-            # CMake Configure
-            cmake_args = (
-                ["cmake", "-S", ".", "-B", build_dir]
-                + get_platform_cmake_args(cxx_standard=dep.cxx_standard)
-                + [f"-DCMAKE_BUILD_TYPE={build_type}"]
-                + dep.cmake_options
-            )
+            if dep.build:
+                # CMake Configure
+                cmake_args = (
+                    ["cmake", "-S", ".", "-B", build_dir]
+                    + get_platform_cmake_args(cxx_standard=dep.cxx_standard)
+                    + [f"-DCMAKE_BUILD_TYPE={build_type}"]
+                    + dep.cmake_options
+                )
 
-            # Resolve library paths for Linker Flags (Bypassing MSBuild env sanitization)
-            link_dirs_abs = [output_lib_dir]
-            for p in dep.extra_link_dirs:
-                if is_absolute_path(p):
-                    link_dirs_abs.append(p)
+                # Resolve library paths for Linker Flags (Bypassing MSBuild env sanitization)
+                link_dirs_abs = [output_lib_dir]
+                for p in dep.extra_link_dirs:
+                    if is_absolute_path(p):
+                        link_dirs_abs.append(p)
+                    else:
+                        link_dirs_abs.append(os.path.join(root_dir, p))
+
+                if link_dirs_abs:
+                    if IS_WINDOWS:
+                        # Windows (MSVC)
+                        path_flags = [f'/LIBPATH:"{p}"' for p in link_dirs_abs]
+                        flags_str = " ".join(path_flags)
+                    else:
+                        # Linux/macOS
+                        path_flags = [f'-L"{p}"' for p in link_dirs_abs]
+                        flags_str = " ".join(path_flags)
+
+                    # Append to existing linker flags if present, or add new ones
+                    def update_flag(args, flag_name, new_val):
+                        found = False
+                        for i, arg in enumerate(args):
+                            if arg.startswith(f"{flag_name}="):
+                                args[i] = f"{arg} {new_val}"
+                                found = True
+                        if not found:
+                            args.append(f"{flag_name}={new_val}")
+
+                    update_flag(cmake_args, "-DCMAKE_EXE_LINKER_FLAGS", flags_str)
+                    update_flag(cmake_args, "-DCMAKE_SHARED_LINKER_FLAGS", flags_str)
+
+                # Check if we should skip configure (only run build)
+                if args.build and is_build_dir_valid(build_dir):
+                    print(f"--- Skipping CMake configure for {dep.name} [{build_type}] ---")
                 else:
-                    link_dirs_abs.append(os.path.join(root_dir, p))
+                    # Run configure (either not in --build mode or build dir doesn't exist)
+                    if args.build:
+                        print(
+                            f"Warning: Build directory not valid at {build_dir}, running configure anyway..."
+                        )
+                    run_command(cmake_args, cwd=dep_dir, env=build_env)
 
-            if link_dirs_abs:
+                # CMake Build
+                # For Multi-Config generators (like VS), we must specify --config
+                build_cmd = ["cmake", "--build", build_dir, "--parallel"]
                 if IS_WINDOWS:
-                    # Windows (MSVC)
-                    path_flags = [f'/LIBPATH:"{p}"' for p in link_dirs_abs]
-                    flags_str = " ".join(path_flags)
-                else:
-                    # Linux/macOS
-                    path_flags = [f'-L"{p}"' for p in link_dirs_abs]
-                    flags_str = " ".join(path_flags)
+                    build_cmd.extend(["--config", build_type])
 
-                # Append to existing linker flags if present, or add new ones
-                def update_flag(args, flag_name, new_val):
-                    found = False
-                    for i, arg in enumerate(args):
-                        if arg.startswith(f"{flag_name}="):
-                            args[i] = f"{arg} {new_val}"
-                            found = True
-                    if not found:
-                        args.append(f"{flag_name}={new_val}")
-
-                update_flag(cmake_args, "-DCMAKE_EXE_LINKER_FLAGS", flags_str)
-                update_flag(cmake_args, "-DCMAKE_SHARED_LINKER_FLAGS", flags_str)
-
-            # Check if we should skip configure (only run build)
-            if args.build and is_build_dir_valid(build_dir):
-                print(f"--- Skipping CMake configure for {dep.name} [{build_type}] ---")
+                run_command(build_cmd, cwd=dep_dir, env=build_env)
             else:
-                # Run configure (either not in --build mode or build dir doesn't exist)
-                if args.build:
-                    print(
-                        f"Warning: Build directory not valid at {build_dir}, running configure anyway..."
-                    )
-                run_command(cmake_args, cwd=dep_dir, env=build_env)
-
-            # CMake Build
-            # For Multi-Config generators (like VS), we must specify --config
-            build_cmd = ["cmake", "--build", build_dir, "--parallel"]
-            if IS_WINDOWS:
-                build_cmd.extend(["--config", build_type])
-
-            run_command(build_cmd, cwd=dep_dir, env=build_env)
+                print(f"--- Skipping build for {dep.name} (build=false) ---")
 
             # Copy Artifacts (Libs)
             print(f"--- Copying artefacts to {output_lib_dir} ---")
 
-            # Find all relevant files in build dir
-            extensions = [LIB_EXT, ".dylib", ".so"]
-            if IS_WINDOWS:
-                extensions.append(".pdb")
-                extensions.append(".dll")
+            # Determine where to search for artifacts
+            search_root = build_dir if dep.build else dep_dir
+            found_files = []
 
-            found_files = glob.glob(os.path.join(build_dir, "**", "*"), recursive=True)
+            # Find all relevant files in search root (recursive)
+            found_files = glob.glob(os.path.join(search_root, "**", "*"), recursive=True)
+            
+            if not found_files and not dep.build:
+                 # Only warn if we expected to find something in a no-build scenario and failed completely
+                 # For build scenarios, the build might have failed earlier or we rely on bin/lib fallback
+                 pass
 
             # Also search in the 'bin' and 'lib' directories of the dependency if they exist (e.g. Slang)
+            # This is preserved for backward compatibility and for finding prebuilt binaries in source tree
             bin_dir = os.path.join(dep_dir, "bin")
             if os.path.exists(bin_dir):
                 found_files.extend(
@@ -453,6 +467,55 @@ def main():
                 )
 
             copied_count = 0
+            
+            # --- Install Rules ---
+            if dep.install:
+                for rule in dep.install:
+                    pattern = rule.get("pattern")
+                    target = rule.get("target")
+                    if not pattern or not target:
+                        print(f"Warning: Invalid install rule in {dep.name}: {rule}")
+                        continue
+                    
+                    # Resolve target directory (relative to root_dir/tools or root_dir/lib usually, but config says target is 'lib' or 'tools')
+                    # We map 'lib' -> output_lib_dir, 'tools' -> output_tools_dir
+                    # Subdirectories are allowed: 'tools/data'
+                    
+                    target_base = target.split("/")[0].split("\\")[0] # Get first component
+                    target_subdir = target[len(target_base):].lstrip("/\\")
+                    
+                    if target_base == "lib":
+                        dest_dir = output_lib_dir
+                    elif target_base == "tools":
+                        dest_dir = output_tools_dir
+                    else:
+                        print(f"Warning: Unknown target base '{target_base}' in install rule. Use 'lib' or 'tools'.")
+                        continue
+                        
+                    if target_subdir:
+                        dest_dir = os.path.join(dest_dir, target_subdir)
+                    
+                    if not os.path.exists(dest_dir):
+                        os.makedirs(dest_dir)
+                        
+                    # Glob pattern relative to search_root
+                    # Note: glob.glob with recursive=True requires ** in pattern if using recursive
+                    # Here we assume pattern is relative to search_root
+                    full_pattern = os.path.join(search_root, pattern)
+                    install_files = glob.glob(full_pattern, recursive=True)
+                    
+                    for src in install_files:
+                        if os.path.isdir(src):
+                            continue
+                        print(f"Installing {os.path.basename(src)} to {target}...")
+                        shutil.copy2(src, os.path.join(dest_dir, os.path.basename(src)))
+                        copied_count += 1
+
+
+            extensions = [LIB_EXT, ".dylib", ".so"]
+            if IS_WINDOWS:
+                extensions.append(".pdb")
+                extensions.append(".dll")
 
             for file_path in found_files:
                 if os.path.isdir(file_path):
