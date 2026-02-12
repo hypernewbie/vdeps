@@ -64,6 +64,8 @@ cmake_options = [
 | `build` | If `false`, skips CMake configure and build steps (default: `true`) |
 | `install` | List of custom copy rules (see below) |
 
+**Variable Substitution:** Use `${ROOT_DIR}` in `cmake_options` to reference the absolute path of the directory containing `vdeps.py`.
+
 **Install Rules:** Use `install` to copy files matching a glob pattern to a target directory (`lib` or `tools`).
 
 ```toml

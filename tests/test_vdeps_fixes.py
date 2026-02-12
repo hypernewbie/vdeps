@@ -21,11 +21,11 @@ class TestPlatformFilteringFixes:
         assert "-DOTHER=ON" not in result
         assert "-DCOMMON=ON" in result
 
-    def test_unknown_platform_tag_warning(self):
-        """Test that unknown platform tags generate warnings."""
+    def test_unknown_platform_tags_are_literals(self):
+        """Test that unknown platform tags are treated as literals (no filtering)."""
         vdeps.PLATFORM_TAG = "linux"
 
-        # Capture stdout to check for warnings
+        # Capture stdout to ensure NO warnings (optional, but good practice)
         captured_output = StringIO()
         with patch("sys.stdout", captured_output):
             items = [
@@ -36,41 +36,39 @@ class TestPlatformFilteringFixes:
             result = vdeps.filter_platform_items(items)
 
         output = captured_output.getvalue()
-        assert "Warning: Unknown platform tag 'windows'" in output
+        assert "Warning" not in output
+        
+        # 'windows' is unknown, so the whole string is preserved as is
+        assert "windows:-DWIN_FEATURE=ON" in result
+        # 'linux' is known, so it is processed and value extracted
         assert "-DLINUX_FEATURE=ON" in result
         assert "-DCOMMON=ON" in result
 
-    def test_unknown_platform_tag_negation_warning(self):
-        """Test that unknown platform tags in negation generate warnings."""
+    def test_unknown_negation_tags_are_literals(self):
+        """Test that unknown platform tags in negation are treated as literals."""
         vdeps.PLATFORM_TAG = "linux"
 
-        # Capture stdout to check for warnings
-        captured_output = StringIO()
-        with patch("sys.stdout", captured_output):
-            items = [
-                "!windows:-DNOT_WINDOWS=ON",
-                "!linux:-DNOT_LINUX=ON",
-                "-DCOMMON=ON",
-            ]
-            result = vdeps.filter_platform_items(items)
+        items = [
+            "!windows:-DNOT_WINDOWS=ON",
+            "!linux:-DNOT_LINUX=ON",
+            "-DCOMMON=ON",
+        ]
+        result = vdeps.filter_platform_items(items)
 
-        output = captured_output.getvalue()
-        assert "Warning: Unknown platform tag 'windows'" in output
-        assert "-DNOT_LINUX=ON" not in result  # Should be excluded (negation)
+        # Unknown tag -> Literal
+        assert "!windows:-DNOT_WINDOWS=ON" in result
+        # Known tag !linux -> Exclude on linux
+        assert "-DNOT_LINUX=ON" not in result
         assert "-DCOMMON=ON" in result
 
-    def test_multiple_unknown_platforms_warning(self):
-        """Test warning for multiple unknown platform tags."""
+    def test_multiple_unknown_platforms_are_literals(self):
+        """Test multiple unknown platform tags."""
         vdeps.PLATFORM_TAG = "linux"
 
-        captured_output = StringIO()
-        with patch("sys.stdout", captured_output):
-            items = ["windows,macos:-DMULTI_UNKNOWN=ON", "-DCOMMON=ON"]
-            result = vdeps.filter_platform_items(items)
+        items = ["windows,macos:-DMULTI_UNKNOWN=ON", "-DCOMMON=ON"]
+        result = vdeps.filter_platform_items(items)
 
-        output = captured_output.getvalue()
-        assert "Warning: Unknown platform tag 'windows'" in output
-        assert "Warning: Unknown platform tag 'macos'" in output
+        assert "windows,macos:-DMULTI_UNKNOWN=ON" in result
         assert "-DCOMMON=ON" in result
 
     def test_value_stripping(self):
@@ -90,35 +88,17 @@ class TestPlatformFilteringFixes:
         assert "-DMULTI=ON" not in result  # Excluded
         assert "-DMULTI2=ON" in result
 
-    def test_duplicate_warning_prevention(self):
-        """Test that duplicate unknown platform tags only warn once per item."""
-        vdeps.PLATFORM_TAG = "linux"
-
-        captured_output = StringIO()
-        with patch("sys.stdout", captured_output):
-            items = ["windows,windows:-DDUP=ON", "windows:-DSINGLE=ON"]
-            result = vdeps.filter_platform_items(items)
-
-        output = captured_output.getvalue()
-        # Should only have one warning for 'windows' in first item
-        assert (
-            output.count("Warning: Unknown platform tag 'windows'") == 2
-        )  # Once per item (two items)
-        # First item should not be included (platform doesn't match)
-        assert "-DDUP=ON" not in result
-        assert "-DSINGLE=ON" not in result
-
     def test_space_after_exclamation(self):
         """Test that spaces after exclamation mark are handled correctly."""
         vdeps.PLATFORM_TAG = "linux"
         items = [
-            "! windows:-DNOT_WINDOWS=ON",
+            "! win:-DNOT_WINDOWS=ON",
             "!linux , mac:-DNOT_LINUX_MAC=ON",
             "! win, linux:-DEXCLUDE=ON",
         ]
         result = vdeps.filter_platform_items(items)
         # Linux platform, so:
-        # First item: exclude windows -> include (since linux != windows)
+        # First item: exclude win -> include (since linux != win)
         assert "-DNOT_WINDOWS=ON" in result
         # Second item: exclude linux or mac -> exclude (since linux matches)
         assert "-DNOT_LINUX_MAC=ON" not in result

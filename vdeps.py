@@ -83,30 +83,30 @@ def filter_platform_items(items):
             continue
 
         platform_spec, value = parts
+
+        # Check if this looks like a valid platform specifier
+        # If any tag is unknown (e.g. drive letters 'C', CMake types 'BOOL'),
+        # treat the whole item as a literal string.
+        candidates = platform_spec
+        if candidates.startswith("!"):
+            candidates = candidates[1:]
+
+        tags = [t.strip() for t in candidates.split(",")]
+
+        if any(t not in VALID_PLATFORMS for t in tags):
+            filtered.append(item)
+            continue
+
         value = value.strip()  # Remove leading/trailing whitespace from value
         include = False
 
         if platform_spec.startswith("!"):
             exclude_platforms = [p.strip() for p in platform_spec[1:].split(",")]
 
-            # Validate platform tags and warn about unknown ones
-            warned = set()
-            for platform in exclude_platforms:
-                if platform not in VALID_PLATFORMS and platform not in warned:
-                    print(f"Warning: Unknown platform tag '{platform}' in '{item}'")
-                    warned.add(platform)
-
             if PLATFORM_TAG not in exclude_platforms:
                 include = True
         else:
             include_platforms = [p.strip() for p in platform_spec.split(",")]
-
-            # Validate platform tags and warn about unknown ones
-            warned = set()
-            for platform in include_platforms:
-                if platform not in VALID_PLATFORMS and platform not in warned:
-                    print(f"Warning: Unknown platform tag '{platform}' in '{item}'")
-                    warned.add(platform)
 
             if PLATFORM_TAG in include_platforms:
                 include = True
@@ -260,7 +260,7 @@ def main():
     # Pytest passes -v for verbose, which we should allow
     if unknown and any(arg.startswith(("--", "-")) for arg in unknown):
         # Filter out common test/debug flags that shouldn't cause errors
-        filtered_unknown = [arg for arg in unknown if arg not in ['-v', '--verbose']]
+        filtered_unknown = [arg for arg in unknown if arg not in ["-v", "--verbose"]]
         if filtered_unknown:
             parser.error(f"unrecognized arguments: {' '.join(filtered_unknown)}")
 
@@ -277,8 +277,21 @@ def main():
         print(f"Error parsing TOML file: {e}")
         sys.exit(1)
 
+    # Pre-calculate root dir for interpolation
+    root_dir_cmake = root_dir.replace(os.sep, "/")
+
     dependencies = []
     for dep_data in toml_data.get("dependency", []):
+        # Interpolate variables in cmake_options
+        if "cmake_options" in dep_data and dep_data["cmake_options"]:
+            new_opts = []
+            for opt in dep_data["cmake_options"]:
+                if isinstance(opt, str):
+                    new_opts.append(opt.replace("${ROOT_DIR}", root_dir_cmake))
+                else:
+                    new_opts.append(opt)
+            dep_data["cmake_options"] = new_opts
+
         try:
             dependencies.append(Dependency(**dep_data))
         except TypeError as e:
@@ -295,27 +308,38 @@ def main():
             stripped = name.strip()
             if stripped:
                 # Validate against common invalid characters
-                if any(char in stripped for char in ['/', '\\', ':', '*', '?', '"', '<', '>', '|']):
-                    print(f"Error: Invalid dependency name '{stripped}' - contains invalid characters")
+                if any(
+                    char in stripped
+                    for char in ["/", "\\", ":", "*", "?", '"', "<", ">", "|"]
+                ):
+                    print(
+                        f"Error: Invalid dependency name '{stripped}' - contains invalid characters"
+                    )
                     sys.exit(1)
                 requested_names.append(stripped)
-        
+
         if not requested_names:
-            print("Error: No valid dependency names provided after stripping whitespace")
+            print(
+                "Error: No valid dependency names provided after stripping whitespace"
+            )
             sys.exit(1)
-        
+
         requested_lower = {name.lower() for name in requested_names}
         available_lower = {dep.name.lower() for dep in dependencies}
-        
+
         missing = requested_lower - available_lower
         if missing:
             for name in missing:
                 print(f"Error: Dependency '{name}' not found in vdeps.toml")
             sys.exit(1)
-        
-        dependencies = [dep for dep in dependencies if dep.name.lower() in requested_lower]
-        
-        print(f"Building selected dependencies: {', '.join(dep.name for dep in dependencies)}")
+
+        dependencies = [
+            dep for dep in dependencies if dep.name.lower() in requested_lower
+        ]
+
+        print(
+            f"Building selected dependencies: {', '.join(dep.name for dep in dependencies)}"
+        )
     else:
         dependencies = [dep for dep in dependencies if dep.build_by_default]
         print(f"Building all default dependencies")
@@ -368,9 +392,9 @@ def main():
             if not os.path.exists(output_lib_dir):
                 os.makedirs(output_lib_dir)
 
-            if (dep.executables or dep.extra_files or dep.install) and not os.path.exists(
-                output_tools_dir
-            ):
+            if (
+                dep.executables or dep.extra_files or dep.install
+            ) and not os.path.exists(output_tools_dir):
                 os.makedirs(output_tools_dir)
 
             # Environment Setup
@@ -418,7 +442,9 @@ def main():
 
                 # Check if we should skip configure (only run build)
                 if args.build and is_build_dir_valid(build_dir):
-                    print(f"--- Skipping CMake configure for {dep.name} [{build_type}] ---")
+                    print(
+                        f"--- Skipping CMake configure for {dep.name} [{build_type}] ---"
+                    )
                 else:
                     # Run configure (either not in --build mode or build dir doesn't exist)
                     if args.build:
@@ -445,12 +471,14 @@ def main():
             found_files = []
 
             # Find all relevant files in search root (recursive)
-            found_files = glob.glob(os.path.join(search_root, "**", "*"), recursive=True)
-            
+            found_files = glob.glob(
+                os.path.join(search_root, "**", "*"), recursive=True
+            )
+
             if not found_files and not dep.build:
-                 # Only warn if we expected to find something in a no-build scenario and failed completely
-                 # For build scenarios, the build might have failed earlier or we rely on bin/lib fallback
-                 pass
+                # Only warn if we expected to find something in a no-build scenario and failed completely
+                # For build scenarios, the build might have failed earlier or we rely on bin/lib fallback
+                pass
 
             # Also search in the 'bin' and 'lib' directories of the dependency if they exist (e.g. Slang)
             # This is preserved for backward compatibility and for finding prebuilt binaries in source tree
@@ -467,7 +495,7 @@ def main():
                 )
 
             copied_count = 0
-            
+
             # --- Install Rules ---
             if dep.install:
                 for rule in dep.install:
@@ -476,41 +504,44 @@ def main():
                     if not pattern or not target:
                         print(f"Warning: Invalid install rule in {dep.name}: {rule}")
                         continue
-                    
+
                     # Resolve target directory (relative to root_dir/tools or root_dir/lib usually, but config says target is 'lib' or 'tools')
                     # We map 'lib' -> output_lib_dir, 'tools' -> output_tools_dir
                     # Subdirectories are allowed: 'tools/data'
-                    
-                    target_base = target.split("/")[0].split("\\")[0] # Get first component
-                    target_subdir = target[len(target_base):].lstrip("/\\")
-                    
+
+                    target_base = target.split("/")[0].split("\\")[
+                        0
+                    ]  # Get first component
+                    target_subdir = target[len(target_base) :].lstrip("/\\")
+
                     if target_base == "lib":
                         dest_dir = output_lib_dir
                     elif target_base == "tools":
                         dest_dir = output_tools_dir
                     else:
-                        print(f"Warning: Unknown target base '{target_base}' in install rule. Use 'lib' or 'tools'.")
+                        print(
+                            f"Warning: Unknown target base '{target_base}' in install rule. Use 'lib' or 'tools'."
+                        )
                         continue
-                        
+
                     if target_subdir:
                         dest_dir = os.path.join(dest_dir, target_subdir)
-                    
+
                     if not os.path.exists(dest_dir):
                         os.makedirs(dest_dir)
-                        
+
                     # Glob pattern relative to search_root
                     # Note: glob.glob with recursive=True requires ** in pattern if using recursive
                     # Here we assume pattern is relative to search_root
                     full_pattern = os.path.join(search_root, pattern)
                     install_files = glob.glob(full_pattern, recursive=True)
-                    
+
                     for src in install_files:
                         if os.path.isdir(src):
                             continue
                         print(f"Installing {os.path.basename(src)} to {target}...")
                         shutil.copy2(src, os.path.join(dest_dir, os.path.basename(src)))
                         copied_count += 1
-
 
             extensions = [LIB_EXT, ".dylib", ".so"]
             if IS_WINDOWS:
@@ -526,13 +557,17 @@ def main():
 
                 # --- Libs ---
                 should_copy_lib = False
-                
+
                 is_lib_artifact = False
                 if ext in extensions:
                     is_lib_artifact = True
                 elif not IS_WINDOWS:
                     # Handle versioned shared libraries on Linux/Mac (e.g. .so.1 or .1.dylib)
-                    if ".so." in filename or (".dylib" in filename and filename.endswith(ext) and ext != ".dylib"):
+                    if ".so." in filename or (
+                        ".dylib" in filename
+                        and filename.endswith(ext)
+                        and ext != ".dylib"
+                    ):
                         is_lib_artifact = True
 
                 if is_lib_artifact:
@@ -595,7 +630,9 @@ def main():
                 print(f"Warning: No artifacts copied for {dep.name} [{config['type']}]")
 
     if args.build:
-        print(f"\n[SUCCESS] Built dependencies (configure skipped where possible): {', '.join(built_names)}")
+        print(
+            f"\n[SUCCESS] Built dependencies (configure skipped where possible): {', '.join(built_names)}"
+        )
     else:
         print(f"\n[SUCCESS] Processed dependencies: {', '.join(built_names)}")
 
