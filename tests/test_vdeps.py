@@ -43,25 +43,24 @@ def test_linux_build(mock_subproc, mock_shutil):
             return ['/path/to/fake_tool/build_release/fake_tool']
         return []
 
-    # 1. Mock Platform and module-level constants
+    # Mock Platform and module-level constants
     with patch('sys.platform', 'linux'), \
          patch('glob.glob', side_effect=mock_glob), \
          patch('vdeps.IS_WINDOWS', False), \
          patch('vdeps.IS_MACOS', False), \
          patch('vdeps.PLATFORM_TAG', 'linux'), \
          patch('vdeps.LIB_EXT', '.a'):
-        # 2. Mock __file__ so vdeps finds our fixture TOML
-        # We need to set it on the module
+        # Mock __file__ so vdeps finds our fixture TOML
         original_file = vdeps.__file__
         vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
         
         try:
-            # 3. Run Main
+            # Run Main
             vdeps.main()
         finally:
             vdeps.__file__ = original_file
 
-    # 4. Verify CMake Calls
+    # Verify CMake Calls
     # Check for common Linux args in the first cmake call for fake_lib
     # Expected: cmake -S . -B ... -G Ninja ... -DOPTION_A=ON
     
@@ -76,7 +75,7 @@ def test_linux_build(mock_subproc, mock_shutil):
     assert '-DCMAKE_CXX_COMPILER=clang++' in args, "Should use Clang on Linux"
     assert '-DOPTION_A=ON' in args, "Should pass dependency-specific options"
 
-    # 5. Verify Copy Calls
+    # Verify Copy Calls
     # On Linux, we expect 'libfake_lib.a' and 'fake_tool' (no extension)
     copy_sources = [c[0][0] for c in mock_shutil.call_args_list]
     copy_filenames = [os.path.basename(s) for s in copy_sources]
@@ -113,11 +112,7 @@ def test_windows_build(mock_subproc, mock_shutil):
         vdeps.__file__ = os.path.join(FIXTURES_DIR, 'dummy_script.py')
         
         try:
-            # We also need to reload the module-level constants like IS_WINDOWS if they are cached?
-            # vdeps.py sets:
-            # IS_WINDOWS = (sys.platform == 'win32')
-            # These are evaluated at import time. We must re-evaluate them or patch them.
-            # Patching the global variables in vdeps is easier.
+            # Re-evaluate or patch constants evaluated at import time
             with patch('vdeps.IS_WINDOWS', True), \
                  patch('vdeps.IS_MACOS', False), \
                  patch('vdeps.PLATFORM_TAG', 'win'), \

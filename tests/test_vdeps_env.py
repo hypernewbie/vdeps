@@ -141,13 +141,13 @@ def test_library_paths_injection(mock_subproc, mock_shutil):
     args = cmake_calls[0][0][0]
     linker_flag_arg = next((a for a in args if '-DCMAKE_EXE_LINKER_FLAGS=' in a), None)
     
-    # 1. Check relative path resolution
+    # Check relative path resolution
     expected_resolved = os.path.join(FIXTURES_DIR, "external", "libs")
     assert expected_resolved in linker_flag_arg
     
-    # 2. Check absolute path
+    # Check absolute path
     assert "C:/opt/local/lib" in linker_flag_arg
 
-    # 3. Check format (Windows)
+    # Check format (Windows)
     assert f'/LIBPATH:"{expected_resolved}"' in linker_flag_arg
     assert '/LIBPATH:"C:/opt/local/lib"' in linker_flag_arg

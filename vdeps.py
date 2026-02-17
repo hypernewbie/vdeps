@@ -52,9 +52,6 @@ VALID_PLATFORMS = {"win", "linux", "mac"}
 # --- Helpers ---
 
 
-# NOTE: Change these in the script here if these are not correct for your system
-# (e.g. if you use a different compiler or build system)
-#
 def filter_platform_items(items):
     """
     Filters a list of items based on platform-specific prefix syntax.
@@ -265,6 +262,11 @@ def main():
         help="Use Clang+Ninja on Windows with MSVC ABI compatibility",
     )
     parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="Remove all build directories after confirmation",
+    )
+    parser.add_argument(
         "dependencies",
         nargs="*",
         help="Optional list of dependency names to build (case-insensitive)",
@@ -292,6 +294,39 @@ def main():
         print(f"Error parsing TOML file: {e}")
         sys.exit(1)
 
+    temp_dir = toml_data.get("temp_dir", None)
+
+    if args.clean:
+        print("WARNING: This will remove all build directories and temporary files.")
+        confirm = input("Type 'clean' to confirm: ")
+        if confirm == "clean":
+            print("Cleaning build directories...")
+            
+            # Clean build directories within dependencies
+            for dep_data in toml_data.get("dependency", []):
+                if os.path.exists(deps_root_dir):
+                    dep_dir = os.path.join(deps_root_dir, dep_data.get("rel_path", ""))
+                    if os.path.exists(dep_dir):
+                        for config in CONFIGS:
+                            for prefix in ["build", "build_llvm"]:
+                                build_dir = os.path.join(dep_dir, f"{prefix}_{config['name']}")
+                                if os.path.exists(build_dir):
+                                    print(f"Removing {build_dir}")
+                                    shutil.rmtree(build_dir)
+            
+            # Clean temp_dir if specified
+            if temp_dir and temp_dir.strip():
+                temp_path = os.path.join(root_dir, temp_dir.strip())
+                if os.path.exists(temp_path):
+                    print(f"Removing temporary directory {temp_path}")
+                    shutil.rmtree(temp_path)
+            
+            print("Clean complete.")
+            sys.exit(0)
+        else:
+            print("Clean cancelled.")
+            sys.exit(0)
+
     # Pre-calculate root dir for interpolation
     root_dir_cmake = root_dir.replace(os.sep, "/")
 
@@ -313,8 +348,6 @@ def main():
             print(f"Error initializing dependency from TOML data: {dep_data}")
             print(f"Details: {e}")
             sys.exit(1)
-
-    temp_dir = toml_data.get("temp_dir", None)
 
     if args.dependencies:
         # Validate dependency names: trim whitespace and filter valid names
@@ -390,13 +423,17 @@ def main():
             print(f"\n--- Building {dep.name} [{build_type}] ---")
 
             if temp_dir and temp_dir.strip():
+                build_dir_name = f"{dep.name}_{config['name']}"
+                if IS_WINDOWS and args.llvm:
+                    build_dir_name = f"{dep.name}_llvm_{config['name']}"
                 build_dir = os.path.join(
-                    root_dir, temp_dir.strip(), f"{dep.name}_{config['name']}"
+                    root_dir, temp_dir.strip(), build_dir_name
                 )
                 # Ensure temp_dir parent directory exists
                 os.makedirs(os.path.dirname(build_dir), exist_ok=True)
             else:
-                build_dir = os.path.join(dep_dir, f"build_{config['name']}")
+                prefix = "build_llvm" if IS_WINDOWS and args.llvm else "build"
+                build_dir = os.path.join(dep_dir, f"{prefix}_{config['name']}")
             output_lib_dir = os.path.join(
                 root_dir, "lib", f"{PLATFORM_TAG}_{config['name']}"
             )
@@ -470,8 +507,7 @@ def main():
                         )
                     run_command(cmake_args, cwd=dep_dir, env=build_env)
 
-                # CMake Build
-                # For Multi-Config generators (like VS), we must specify --config
+                # Multi-Config generators (like VS) require --config
                 build_cmd = ["cmake", "--build", build_dir, "--parallel"]
                 if IS_WINDOWS:
                     build_cmd.extend(["--config", build_type])

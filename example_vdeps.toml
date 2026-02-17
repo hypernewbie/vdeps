@@ -1,10 +1,10 @@
 # Example vdeps.toml demonstrating the new features
 
-# 1. Centralized Build Artifacts
+# Centralized Build Artifacts
 # Build directories will be created in "temp/" instead of inside each dependency folder
 temp_dir = "temp"
 
-# 2. Platform-Specific Configuration
+# Platform-Specific Configuration
 # Platform tags: win, linux, mac
 # Syntax:
 #   "platform:value" - include only on this platform
@@ -38,7 +38,7 @@ cmake_options = [
     "-DVULKAN_HEADERS_ENABLE_INSTALL=OFF",
 ]
 
-# 3. Per-Dependency C++ Standard
+# Per-Dependency C++ Standard
 # Each dependency can specify its own C++ standard
 # If omitted, defaults to 20 (the previous default)
 

@@ -47,3 +47,41 @@ def test_get_platform_cmake_args_not_windows():
         assert "Ninja" in args
         assert "-DCMAKE_C_COMPILER=clang" in args # Standard clang
         assert "-DCMAKE_C_COMPILER=clang-cl" not in args
+
+def test_llvm_build_directory_name(tmp_path):
+    """Test that --llvm uses build_llvm_ directory names on Windows."""
+    # Setup dummy project
+    root = tmp_path
+    vdeps_dir = root / "vdeps"
+    dep_dir = vdeps_dir / "test_dep"
+    dep_dir.mkdir(parents=True)
+    
+    toml_content = """
+    dependency = [
+        { name = "test_dep", rel_path = "test_dep", cmake_options = [] }
+    ]
+    """
+    (root / "vdeps.toml").write_text(toml_content)
+    
+    with patch('vdeps.IS_WINDOWS', True), \
+         patch('vdeps.PLATFORM_TAG', 'win'), \
+         patch('sys.argv', ['vdeps.py', '--llvm']), \
+         patch('vdeps.__file__', str(root / "vdeps.py")), \
+         patch('vdeps.os.path.dirname', return_value=str(root)), \
+         patch('vdeps.os.path.abspath', return_value=str(root / "vdeps.py")), \
+         patch('vdeps.run_command') as mock_run:
+        
+        # We also need to mock glob to return nothing so it doesn't try to copy
+        with patch('glob.glob', return_value=[]):
+            vdeps.main()
+            
+    # Check if any cmake command used build_llvm_debug or build_llvm_release
+    found_llvm_dir = False
+    for call in mock_run.call_args_list:
+        cmd = call[0][0]
+        if any("build_llvm_" in arg for arg in cmd):
+            found_llvm_dir = True
+            break
+            
+    assert found_llvm_dir, "Should use build_llvm_ prefix when --llvm is set on Windows"
+
