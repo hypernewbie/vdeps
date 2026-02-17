@@ -136,7 +136,7 @@ def is_absolute_path(path):
     return False
 
 
-def get_platform_cmake_args(cxx_standard=20):
+def get_platform_cmake_args(cxx_standard=20, use_llvm=False):
     """Returns CMake arguments specific to the current operating system."""
     common_args = [
         f"-DCMAKE_CXX_STANDARD={cxx_standard}",
@@ -145,7 +145,7 @@ def get_platform_cmake_args(cxx_standard=20):
 
     if IS_WINDOWS:
         # Windows-specific flags (MSVC default)
-        return common_args + [
+        msvc_flags = [
             "-DVK_USE_PLATFORM_WIN32_KHR=ON",
             # Enforce static runtime (MT/MTd)
             # This requires CMake 3.15+ and CMP0091 set to NEW
@@ -155,6 +155,16 @@ def get_platform_cmake_args(cxx_standard=20):
             "-DCMAKE_C_FLAGS=/W0",
             "-DCMAKE_CXX_FLAGS=/W0 /EHsc /MP",
         ]
+
+        if use_llvm:
+            return common_args + [
+                "-G",
+                "Ninja",
+                "-DCMAKE_C_COMPILER=clang-cl",
+                "-DCMAKE_CXX_COMPILER=clang-cl",
+            ] + msvc_flags
+
+        return common_args + msvc_flags
     else:
         # Unix-like flags (Clang + Ninja + libc++)
         args = common_args + [
@@ -248,6 +258,11 @@ def main():
         "--build",
         action="store_true",
         help="Only build without regenerating project (requires existing build directories)",
+    )
+    parser.add_argument(
+        "--llvm",
+        action="store_true",
+        help="Use Clang+Ninja on Windows with MSVC ABI compatibility",
     )
     parser.add_argument(
         "dependencies",
@@ -404,7 +419,9 @@ def main():
                 # CMake Configure
                 cmake_args = (
                     ["cmake", "-S", ".", "-B", build_dir]
-                    + get_platform_cmake_args(cxx_standard=dep.cxx_standard)
+                    + get_platform_cmake_args(
+                        cxx_standard=dep.cxx_standard, use_llvm=args.llvm
+                    )
                     + [f"-DCMAKE_BUILD_TYPE={build_type}"]
                     + dep.cmake_options
                 )
