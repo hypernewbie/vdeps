@@ -89,12 +89,16 @@ root/
 │   ├── linux_debug/
 │   ├── linux_release/
 │   ├── win_debug/
-│   └── win_release/
+│   ├── win_release/
+│   ├── win_llvm_debug/
+│   └── win_llvm_release/
 └── tools/
     ├── linux_debug/
     ├── linux_release/
     ├── win_debug/
-    └── win_release/
+    ├── win_release/
+    ├── win_llvm_debug/
+    └── win_llvm_release/
 ```
 
 ## Platform-Specific Behaviour

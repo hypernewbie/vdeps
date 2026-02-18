@@ -133,6 +133,14 @@ def is_absolute_path(path):
     return False
 
 
+def get_llvm_tool_path(name):
+    """Finds an LLVM tool in the system PATH, appending .exe on Windows."""
+    ext = ".exe" if IS_WINDOWS else ""
+    full_name = f"{name}{ext}"
+    path = shutil.which(full_name)
+    return path.replace(os.sep, "/") if path else name
+
+
 def get_platform_cmake_args(cxx_standard=20, use_llvm=False):
     """Returns CMake arguments specific to the current operating system."""
     common_args = [
@@ -141,27 +149,37 @@ def get_platform_cmake_args(cxx_standard=20, use_llvm=False):
     ]
 
     if IS_WINDOWS:
-        # Windows-specific flags (MSVC default)
-        msvc_flags = [
+        # Windows-specific flags (Common for both MSVC and Clang-cl)
+        win_common = [
             "-DVK_USE_PLATFORM_WIN32_KHR=ON",
-            # Enforce static runtime (MT/MTd)
-            # This requires CMake 3.15+ and CMP0091 set to NEW
             "-DCMAKE_POLICY_DEFAULT_CMP0091=NEW",
             "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>",
-            # Turn off all warnings
-            "-DCMAKE_C_FLAGS=/W0",
-            "-DCMAKE_CXX_FLAGS=/W0 /EHsc /MP",
         ]
 
         if use_llvm:
-            return common_args + [
+            clang_cl = get_llvm_tool_path("clang-cl")
+            lld_link = get_llvm_tool_path("lld-link")
+            llvm_nm = get_llvm_tool_path("llvm-nm")
+            llvm_lib = get_llvm_tool_path("llvm-lib")
+            llvm_ranlib = get_llvm_tool_path("llvm-ranlib")
+
+            return common_args + win_common + [
                 "-G",
                 "Ninja",
-                "-DCMAKE_C_COMPILER=clang-cl",
-                "-DCMAKE_CXX_COMPILER=clang-cl",
-            ] + msvc_flags
+                f"-DCMAKE_C_COMPILER={clang_cl}",
+                f"-DCMAKE_CXX_COMPILER={clang_cl}",
+                f"-DCMAKE_LINKER={lld_link}",
+                f"-DCMAKE_NM={llvm_nm}",
+                f"-DCMAKE_AR={llvm_lib}",
+                f"-DCMAKE_RANLIB={llvm_ranlib}",
+                "-DCMAKE_C_FLAGS=/W0 -w",
+                "-DCMAKE_CXX_FLAGS=/W0 /EHsc -w",
+            ]
 
-        return common_args + msvc_flags
+        return common_args + win_common + [
+            "-DCMAKE_C_FLAGS=/W0",
+            "-DCMAKE_CXX_FLAGS=/W0 /EHsc /MP",
+        ]
     else:
         # Unix-like flags (Clang + Ninja + libc++)
         args = common_args + [
@@ -329,19 +347,12 @@ def main():
 
     # Pre-calculate root dir for interpolation
     root_dir_cmake = root_dir.replace(os.sep, "/")
+    platform_subdir = PLATFORM_TAG
+    if IS_WINDOWS and args.llvm:
+        platform_subdir = "win_llvm"
 
     dependencies = []
     for dep_data in toml_data.get("dependency", []):
-        # Interpolate variables in cmake_options
-        if "cmake_options" in dep_data and dep_data["cmake_options"]:
-            new_opts = []
-            for opt in dep_data["cmake_options"]:
-                if isinstance(opt, str):
-                    new_opts.append(opt.replace("${ROOT_DIR}", root_dir_cmake))
-                else:
-                    new_opts.append(opt)
-            dep_data["cmake_options"] = new_opts
-
         try:
             dependencies.append(Dependency(**dep_data))
         except TypeError as e:
@@ -434,11 +445,12 @@ def main():
             else:
                 prefix = "build_llvm" if IS_WINDOWS and args.llvm else "build"
                 build_dir = os.path.join(dep_dir, f"{prefix}_{config['name']}")
+
             output_lib_dir = os.path.join(
-                root_dir, "lib", f"{PLATFORM_TAG}_{config['name']}"
+                root_dir, "lib", f"{platform_subdir}_{config['name']}"
             )
             output_tools_dir = os.path.join(
-                root_dir, "tools", f"{PLATFORM_TAG}_{config['name']}"
+                root_dir, "tools", f"{platform_subdir}_{config['name']}"
             )
 
             if not os.path.exists(output_lib_dir):
@@ -453,6 +465,15 @@ def main():
             build_env = env.copy()
 
             if dep.build:
+                # Interpolate variables in cmake_options for this config
+                final_cmake_options = []
+                for opt in dep.cmake_options:
+                    if isinstance(opt, str):
+                        opt = opt.replace("${ROOT_DIR}", root_dir_cmake)
+                        opt = opt.replace("${PLATFORM_SUBDIR}", platform_subdir)
+                        opt = opt.replace("${CONFIG_NAME}", config["name"])
+                    final_cmake_options.append(opt)
+
                 # CMake Configure
                 cmake_args = (
                     ["cmake", "-S", ".", "-B", build_dir]
@@ -460,7 +481,7 @@ def main():
                         cxx_standard=dep.cxx_standard, use_llvm=args.llvm
                     )
                     + [f"-DCMAKE_BUILD_TYPE={build_type}"]
-                    + dep.cmake_options
+                    + final_cmake_options
                 )
 
                 # Resolve library paths for Linker Flags (Bypassing MSBuild env sanitization)
@@ -558,24 +579,31 @@ def main():
                         print(f"Warning: Invalid install rule in {dep.name}: {rule}")
                         continue
 
+                    # Interpolate variables in target
+                    # ${PLATFORM_SUBDIR} -> win, win_llvm, linux, mac
+                    # ${CONFIG_NAME} -> debug, release
+                    # ${ROOT_DIR} -> absolute path to vdeps.py directory
+                    target = target.replace("${PLATFORM_SUBDIR}", platform_subdir)
+                    target = target.replace("${CONFIG_NAME}", config["name"])
+                    target = target.replace("${ROOT_DIR}", root_dir_cmake)
+
                     # Resolve target directory (relative to root_dir/tools or root_dir/lib usually, but config says target is 'lib' or 'tools')
                     # We map 'lib' -> output_lib_dir, 'tools' -> output_tools_dir
                     # Subdirectories are allowed: 'tools/data'
 
-                    target_base = target.split("/")[0].split("\\")[
-                        0
-                    ]  # Get first component
-                    target_subdir = target[len(target_base) :].lstrip("/\\")
+                    target_norm = target.replace("\\", "/")
+                    parts = target_norm.split("/")
+                    target_base = parts[0]
+                    target_subdir = "/".join(parts[1:])
 
                     if target_base == "lib":
                         dest_dir = output_lib_dir
                     elif target_base == "tools":
                         dest_dir = output_tools_dir
                     else:
-                        print(
-                            f"Warning: Unknown target base '{target_base}' in install rule. Use 'lib' or 'tools'."
-                        )
-                        continue
+                        # Arbitrary path relative to root_dir
+                        dest_dir = os.path.join(root_dir, target)
+                        target_subdir = ""
 
                     if target_subdir:
                         dest_dir = os.path.join(dest_dir, target_subdir)

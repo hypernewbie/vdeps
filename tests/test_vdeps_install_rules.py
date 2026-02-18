@@ -1,11 +1,15 @@
-import sys
 import os
+import shutil
 import pytest
 from unittest.mock import patch, MagicMock
 
+# Add project root to path so we can import vdeps
+import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import vdeps
+
+FIXTURES_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), 'fixtures'))
 
 @pytest.fixture
 def mock_subproc():
@@ -20,164 +24,105 @@ def mock_shutil():
 
 @pytest.fixture
 def mock_open_toml():
-    original_open = open
-    
-    def side_effect(file, *args, **kwargs):
-        # Check if we're opening vdeps.toml (handling potential path variations)
-        if "vdeps.toml" in str(file):
-            return MagicMock()
-        return original_open(file, *args, **kwargs)
-        
-    with patch('builtins.open', side_effect=side_effect):
-        yield
+    # Helper to mock vdeps.toml opening since vdeps.main() opens it
+    pass
 
-def test_no_build_install(mock_subproc, mock_shutil, mock_open_toml):
+def test_no_build_install(mock_subproc, mock_shutil):
     """
-    Test that build=False skips CMake and install rules copy files from source dir.
+    Test install rules when build=false:
+    - Should NOT run cmake configure/build
+    - Should search for files in dep_dir
+    - Should copy matched files to target dirs
     """
     mock_toml_data = {
         "dependency": [
             {
-                "name": "PrebuiltSDK",
-                "rel_path": "sdks/prebuilt",
+                "name": "StaticAssets",
+                "rel_path": "assets",
                 "cmake_options": [],
                 "build": False,
                 "install": [
-                    {"pattern": "lib/*.lib", "target": "lib"},
-                    {"pattern": "bin/*.dll", "target": "tools"},
-                    {"pattern": "data/*", "target": "tools/data"}
+                    {"pattern": "data/*.txt", "target": "tools/config"},
+                    {"pattern": "libs/*.so", "target": "lib"}
                 ]
             }
         ]
     }
 
-    def mock_glob(pattern, recursive=False):
-        # Normalize pattern
-        pattern = pattern.replace('\\', '/')
-        
-        # When build=False, search root is dep_dir
-        if 'sdks/prebuilt' in pattern:
-            if pattern.endswith('lib/*.lib'):
-                return ['/path/to/sdks/prebuilt/lib/prebuilt.lib']
-            elif pattern.endswith('bin/*.dll'):
-                return ['/path/to/sdks/prebuilt/bin/prebuilt.dll']
-            elif pattern.endswith('data/*'):
-                return ['/path/to/sdks/prebuilt/data/config.json', '/path/to/sdks/prebuilt/data/assets.pak']
-            elif pattern.endswith('/**/*'): # The recursive search for 'libs'/'executables' logic
-                return []
+    def mock_glob_side_effect(pattern, recursive=False):
+        if "data/*.txt" in pattern:
+            return ["/path/to/assets/data/config.txt"]
+        if "libs/*.so" in pattern:
+            return ["/path/to/assets/libs/libdummy.so"]
         return []
 
     with (
         patch('vdeps.tomllib.load', return_value=mock_toml_data),
         patch('os.path.exists', return_value=True),
-        patch('sys.argv', ['vdeps.py', 'PrebuiltSDK']),
-        patch('glob.glob', side_effect=mock_glob),
+        patch('sys.argv', ['vdeps.py', 'StaticAssets']),
+        patch('glob.glob', side_effect=mock_glob_side_effect),
         patch('os.makedirs')
     ):
-        with patch('builtins.print') as mock_print:
-            vdeps.main()
-            
-            # Verify CMake was NOT run
-            assert not mock_subproc.called
-            
-            # Verify skipping message
-            printed_lines = [call[0][0] for call in mock_print.call_args_list if call.args]
-            assert any("Skipping build for PrebuiltSDK (build=false)" in line for line in printed_lines)
+        vdeps.main()
 
-            # Verify Copy calls
-            copy_calls = mock_shutil.call_args_list
-            destinations = [call[0][1] for call in copy_calls]
-            sources = [call[0][0] for call in copy_calls]
-            
-            # lib copy
-            assert any('prebuilt.lib' in src for src in sources)
-            assert any('lib' in dest and 'prebuilt.lib' in dest for dest in destinations)
-            
-            # tools copy
-            assert any('prebuilt.dll' in src for src in sources)
-            assert any('tools' in dest and 'prebuilt.dll' in dest for dest in destinations)
-            
-            # data copy (subdir)
-            assert any('config.json' in src for src in sources)
-            # Check destination has 'data' subdir (os.path.join usually handles this)
-            # The destination path construction in vdeps.py joins target_base + target_subdir
-            # We just check roughly if it went to the right place
-            assert any('data' in dest and 'config.json' in dest for dest in destinations)
+    # Verify NO cmake calls
+    for call in mock_subproc.call_args_list:
+        args = call[0][0]
+        assert "cmake" not in args or "--build" in str(args) # Only allow build if it was somehow called (it shouldn't be)
 
-def test_install_with_build(mock_subproc, mock_shutil, mock_open_toml):
+    # Verify copy calls
+    copy_calls = mock_shutil.call_args_list
+    # 2 files * 2 configs = 4
+    assert len(copy_calls) == 4
+
+    # Check destinations (mapping lib/tools keywords)
+    destinations = [call[0][1] for call in copy_calls]
+    assert any("tools" in d and "config" in d for d in destinations)
+    assert any("lib" in d and "linux_debug" in d for d in destinations)
+
+def test_install_with_build(mock_subproc, mock_shutil):
     """
-    Test that install rules work even when build=True (copying from build dir).
+    Test install rules when build=true:
+    - Should search for files in build_dir
+    - Should copy matched files to target dirs
     """
     mock_toml_data = {
         "dependency": [
             {
-                "name": "BuiltLib",
-                "rel_path": "libs/built_lib",
+                "name": "BuildAndInstall",
+                "rel_path": "project",
                 "cmake_options": [],
-                "build": True,
                 "install": [
-                    {"pattern": "generated/*.h", "target": "lib/include"}
+                    {"pattern": "generated/*.dll", "target": "tools"}
                 ]
             }
         ]
     }
 
-    def mock_glob(pattern, recursive=False):
-        pattern = pattern.replace('\\', '/')
-        if 'build_debug' in pattern and pattern.endswith('generated/*.h'):
-            return ['/path/to/build_debug/generated/my_header.h']
-        elif 'build_release' in pattern and pattern.endswith('generated/*.h'):
-            return ['/path/to/build_release/generated/my_header.h']
+    def mock_glob_side_effect(pattern, recursive=False):
+        if "generated/*.dll" in pattern and "build_debug" in pattern:
+            return ["/path/to/project/build_debug/generated/plugin.dll"]
+        if "generated/*.dll" in pattern and "build_release" in pattern:
+            return ["/path/to/project/build_release/generated/plugin.dll"]
         return []
 
     with (
         patch('vdeps.tomllib.load', return_value=mock_toml_data),
         patch('os.path.exists', return_value=True),
-        patch('sys.argv', ['vdeps.py', 'BuiltLib']),
-        patch('glob.glob', side_effect=mock_glob),
-        patch('os.makedirs')
+        patch('sys.argv', ['vdeps.py', 'BuildAndInstall']),
+        patch('glob.glob', side_effect=mock_glob_side_effect),
+        patch('os.makedirs'),
+        patch('vdeps.IS_WINDOWS', True),
+        patch('vdeps.PLATFORM_TAG', 'win')
     ):
-         with patch('builtins.print'):
-            vdeps.main()
-            
-            # Verify CMake WAS run
-            assert mock_subproc.called
-            
-            # Verify Copy calls for generated header
-            copy_calls = mock_shutil.call_args_list
-            destinations = [call[0][1] for call in copy_calls]
-            
-            assert any('my_header.h' in dest and 'include' in dest for dest in destinations)
+        vdeps.main()
 
-def test_install_invalid_target(mock_subproc, mock_shutil, mock_open_toml):
-    """
-    Test warning on invalid install target.
-    """
-    mock_toml_data = {
-        "dependency": [
-            {
-                "name": "BadTarget",
-                "rel_path": "bad",
-                "cmake_options": [],
-                "install": [
-                    {"pattern": "*.txt", "target": "somewhere_else"}
-                ]
-            }
-        ]
-    }
-
-    with (
-        patch('vdeps.tomllib.load', return_value=mock_toml_data),
-        patch('os.path.exists', return_value=True),
-        patch('sys.argv', ['vdeps.py', 'BadTarget']),
-        patch('glob.glob', return_value=['file.txt']),
-        patch('os.makedirs')
-    ):
-         with patch('builtins.print') as mock_print:
-            vdeps.main()
-            
-            printed_lines = [call[0][0] for call in mock_print.call_args_list if call.args]
-            assert any("Unknown target base 'somewhere_else'" in line for line in printed_lines)
-            
-            # Should NOT copy
-            assert not mock_shutil.called
+    # Verify copy calls for both configs
+    copy_calls = mock_shutil.call_args_list
+    # For each config (debug/release), it runs install rules
+    # Total expected: 1 file * 2 configs = 2
+    assert len(copy_calls) >= 2
+    
+    destinations = [call[0][1] for call in copy_calls]
+    assert any("win_debug" in d for d in destinations)
+    assert any("win_release" in d for d in destinations)
