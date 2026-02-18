@@ -53,8 +53,9 @@ elif IS_MACOS:
 else:
     PLATFORM_TAG = "linux"
 
+ACTIVE_PLATFORM_TAGS = {PLATFORM_TAG}
+VALID_PLATFORMS = {"win", "linux", "mac", "win_llvm"}
 LIB_EXT = ".lib" if IS_WINDOWS else ".a"
-VALID_PLATFORMS = {"win", "linux", "mac"}
 
 # --- Helpers ---
 
@@ -63,16 +64,12 @@ def filter_platform_items(items):
     """
     Filters a list of items based on platform-specific prefix syntax.
 
-    Supported syntax:
-    - "platform:value" - only include if current platform matches
-    - "!platform:value" - only include if current platform does NOT match
-    - "platform1,platform2:value" - only include if current platform matches any
-    - "value" - include on all platforms (backward compatible)
+    Supported tags: win, linux, mac, win_llvm
 
-    Platform tags: win, linux, mac
+    Uses PLATFORM_TAG and ACTIVE_PLATFORM_TAGS to determine active tags.
 
-    :param items: List of strings with optional platform prefixes
-    :return: List of values that match the current platform
+    :param items: list of strings
+    :return: filtered list
     """
     filtered = []
 
@@ -92,7 +89,8 @@ def filter_platform_items(items):
         # If any tag is unknown (e.g. drive letters 'C', CMake types 'BOOL'),
         # treat the whole item as a literal string.
         candidates = platform_spec
-        if candidates.startswith("!"):
+        negated = candidates.startswith("!")
+        if negated:
             candidates = candidates[1:]
 
         tags = [t.strip() for t in candidates.split(",")]
@@ -104,15 +102,23 @@ def filter_platform_items(items):
         value = value.strip()  # Remove leading/trailing whitespace from value
         include = False
 
-        if platform_spec.startswith("!"):
-            exclude_platforms = [p.strip() for p in platform_spec[1:].split(",")]
+        # tags
+        effective_tags = {PLATFORM_TAG}
+        if "ACTIVE_PLATFORM_TAGS" in globals():
+            try:
+                extra = set(globals()["ACTIVE_PLATFORM_TAGS"])
+            except Exception:
+                extra = set()
+            if "win_llvm" in extra and PLATFORM_TAG == "win":
+                effective_tags.add("win_llvm")
 
-            if PLATFORM_TAG not in exclude_platforms:
+        if negated:
+            exclude_platforms = set(p.strip() for p in platform_spec[1:].split(","))
+            if effective_tags.isdisjoint(exclude_platforms):
                 include = True
         else:
-            include_platforms = [p.strip() for p in platform_spec.split(",")]
-
-            if PLATFORM_TAG in include_platforms:
+            include_platforms = set(p.strip() for p in platform_spec.split(","))
+            if not effective_tags.isdisjoint(include_platforms):
                 include = True
 
         if include:
@@ -354,6 +360,13 @@ def main():
 
     # Pre-calculate root dir for interpolation
     root_dir_cmake = root_dir.replace(os.sep, "/")
+    
+    global ACTIVE_PLATFORM_TAGS
+    if IS_WINDOWS and args.llvm:
+        ACTIVE_PLATFORM_TAGS = {PLATFORM_TAG, "win_llvm"}
+    else:
+        ACTIVE_PLATFORM_TAGS = {PLATFORM_TAG}
+    
     platform_subdir = PLATFORM_TAG
     if IS_WINDOWS and args.llvm:
         platform_subdir = "win_llvm"
