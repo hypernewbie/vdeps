@@ -127,6 +127,36 @@ def filter_platform_items(items):
     return filtered
 
 
+def apply_patches(dep_dir, patches):
+    for patch in patches:
+        target_file = os.path.join(dep_dir, patch["file"])
+        if not os.path.exists(target_file):
+            print(f"Warning: Patch target not found: {target_file}")
+            continue
+        with open(target_file, "r", encoding="utf-8") as f:
+            content = f.read()
+        if patch["search"] not in content:
+            print(f"Warning: Patch search string not found in {target_file}")
+            continue
+        content = content.replace(patch["search"], patch["replace"], 1)
+        with open(target_file, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"Patched: {patch['file']}")
+
+
+def revert_patches(dep_dir, patches):
+    for patch in patches:
+        target_file = os.path.join(dep_dir, patch["file"])
+        if not os.path.exists(target_file):
+            continue
+        with open(target_file, "r", encoding="utf-8") as f:
+            content = f.read()
+        content = content.replace(patch["replace"], patch["search"], 1)
+        with open(target_file, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"Reverted patch: {patch['file']}")
+
+
 def is_build_dir_valid(build_dir):
     """Check if build directory exists and contains CMake cache for building."""
     try:
@@ -176,23 +206,31 @@ def get_platform_cmake_args(cxx_standard=20, use_llvm=False):
             llvm_lib = get_llvm_tool_path("llvm-lib")
             llvm_ranlib = get_llvm_tool_path("llvm-ranlib")
 
-            return common_args + win_common + [
-                "-G",
-                "Ninja",
-                f"-DCMAKE_C_COMPILER={clang_cl}",
-                f"-DCMAKE_CXX_COMPILER={clang_cl}",
-                f"-DCMAKE_LINKER={lld_link}",
-                f"-DCMAKE_NM={llvm_nm}",
-                f"-DCMAKE_AR={llvm_lib}",
-                f"-DCMAKE_RANLIB={llvm_ranlib}",
-                "-DCMAKE_C_FLAGS=/W0 -w",
-                "-DCMAKE_CXX_FLAGS=/W0 /EHsc -w",
-            ]
+            return (
+                common_args
+                + win_common
+                + [
+                    "-G",
+                    "Ninja",
+                    f"-DCMAKE_C_COMPILER={clang_cl}",
+                    f"-DCMAKE_CXX_COMPILER={clang_cl}",
+                    f"-DCMAKE_LINKER={lld_link}",
+                    f"-DCMAKE_NM={llvm_nm}",
+                    f"-DCMAKE_AR={llvm_lib}",
+                    f"-DCMAKE_RANLIB={llvm_ranlib}",
+                    "-DCMAKE_C_FLAGS=/W0 -w",
+                    "-DCMAKE_CXX_FLAGS=/W0 /EHsc -w",
+                ]
+            )
 
-        return common_args + win_common + [
-            "-DCMAKE_C_FLAGS=/W0",
-            "-DCMAKE_CXX_FLAGS=/W0 /EHsc /MP",
-        ]
+        return (
+            common_args
+            + win_common
+            + [
+                "-DCMAKE_C_FLAGS=/W0",
+                "-DCMAKE_CXX_FLAGS=/W0 /EHsc /MP",
+            ]
+        )
     else:
         # Unix-like flags (Clang + Ninja + libc++)
         args = common_args + [
@@ -239,6 +277,7 @@ class Dependency:
         build_by_default=True,
         build=True,
         install=None,
+        patches=None,
     ):
         """
         :param name: Display name.
@@ -269,6 +308,7 @@ class Dependency:
         self.build_by_default = build_by_default
         self.build = build
         self.install = install
+        self.patches = patches or []
 
 
 # --- Main Build Logic ---
@@ -332,7 +372,7 @@ def main():
         confirm = input("Type 'clean' to confirm: ")
         if confirm == "clean":
             print("Cleaning build directories...")
-            
+
             # Clean build directories within dependencies
             for dep_data in toml_data.get("dependency", []):
                 if os.path.exists(deps_root_dir):
@@ -340,18 +380,20 @@ def main():
                     if os.path.exists(dep_dir):
                         for config in CONFIGS:
                             for prefix in ["build", "build_llvm"]:
-                                build_dir = os.path.join(dep_dir, f"{prefix}_{config['name']}")
+                                build_dir = os.path.join(
+                                    dep_dir, f"{prefix}_{config['name']}"
+                                )
                                 if os.path.exists(build_dir):
                                     print(f"Removing {build_dir}")
                                     shutil.rmtree(build_dir)
-            
+
             # Clean temp_dir if specified
             if temp_dir and temp_dir.strip():
                 temp_path = os.path.join(root_dir, temp_dir.strip())
                 if os.path.exists(temp_path):
                     print(f"Removing temporary directory {temp_path}")
                     shutil.rmtree(temp_path)
-            
+
             print("Clean complete.")
             sys.exit(0)
         else:
@@ -360,13 +402,13 @@ def main():
 
     # Pre-calculate root dir for interpolation
     root_dir_cmake = root_dir.replace(os.sep, "/")
-    
+
     global ACTIVE_PLATFORM_TAGS
     if IS_WINDOWS and args.llvm:
         ACTIVE_PLATFORM_TAGS = {PLATFORM_TAG, "win_llvm"}
     else:
         ACTIVE_PLATFORM_TAGS = {PLATFORM_TAG}
-    
+
     platform_subdir = PLATFORM_TAG
     if IS_WINDOWS and args.llvm:
         platform_subdir = "win_llvm"
@@ -444,291 +486,306 @@ def main():
             filter_platform_items(dep.extra_files or []) if dep.extra_files else None
         )
 
-        for config in CONFIGS:
-            # Determine actual CMake build type
-            # On Windows, we want RelWithDebInfo instead of Release to get PDBs
-            build_type = config["type"]
-            if IS_WINDOWS and config["name"] == "release":
-                build_type = "RelWithDebInfo"
+        if dep.patches:
+            print(f"--- Applying patches for {dep.name} ---")
+            apply_patches(dep_dir, dep.patches)
 
-            print(f"\n--- Building {dep.name} [{build_type}] ---")
+        try:
+            for config in CONFIGS:
+                # Determine actual CMake build type
+                # On Windows, we want RelWithDebInfo instead of Release to get PDBs
+                build_type = config["type"]
+                if IS_WINDOWS and config["name"] == "release":
+                    build_type = "RelWithDebInfo"
 
-            if temp_dir and temp_dir.strip():
-                build_dir_name = f"{dep.name}_{config['name']}"
-                if IS_WINDOWS and args.llvm:
-                    build_dir_name = f"{dep.name}_llvm_{config['name']}"
-                build_dir = os.path.join(
-                    root_dir, temp_dir.strip(), build_dir_name
-                )
-                # Ensure temp_dir parent directory exists
-                os.makedirs(os.path.dirname(build_dir), exist_ok=True)
-            else:
-                prefix = "build_llvm" if IS_WINDOWS and args.llvm else "build"
-                build_dir = os.path.join(dep_dir, f"{prefix}_{config['name']}")
+                print(f"\n--- Building {dep.name} [{build_type}] ---")
 
-            output_lib_dir = os.path.join(
-                root_dir, "lib", f"{platform_subdir}_{config['name']}"
-            )
-            output_tools_dir = os.path.join(
-                root_dir, "tools", f"{platform_subdir}_{config['name']}"
-            )
-
-            if not os.path.exists(output_lib_dir):
-                os.makedirs(output_lib_dir)
-
-            if (
-                dep.executables or dep.extra_files or dep.install
-            ) and not os.path.exists(output_tools_dir):
-                os.makedirs(output_tools_dir)
-
-            # Environment Setup
-            build_env = env.copy()
-
-            if dep.build:
-                # Interpolate variables in cmake_options for this config
-                final_cmake_options = []
-                for opt in dep.cmake_options:
-                    if isinstance(opt, str):
-                        opt = opt.replace("${ROOT_DIR}", root_dir_cmake)
-                        opt = opt.replace("${PLATFORM_SUBDIR}", platform_subdir)
-                        opt = opt.replace("${CONFIG_NAME}", config["name"])
-                    final_cmake_options.append(opt)
-
-                # CMake Configure
-                cmake_args = (
-                    ["cmake", "-S", ".", "-B", build_dir]
-                    + get_platform_cmake_args(
-                        cxx_standard=dep.cxx_standard, use_llvm=args.llvm
-                    )
-                    + [f"-DCMAKE_BUILD_TYPE={build_type}"]
-                    + final_cmake_options
-                )
-
-                # Resolve library paths for Linker Flags (Bypassing MSBuild env sanitization)
-                link_dirs_abs = [output_lib_dir]
-                for p in dep.extra_link_dirs:
-                    if is_absolute_path(p):
-                        link_dirs_abs.append(p)
-                    else:
-                        link_dirs_abs.append(os.path.join(root_dir, p))
-
-                if link_dirs_abs:
-                    if IS_WINDOWS:
-                        # Windows (MSVC)
-                        path_flags = [f'/LIBPATH:"{p}"' for p in link_dirs_abs]
-                        flags_str = " ".join(path_flags)
-                    else:
-                        # Linux/macOS
-                        path_flags = [f'-L"{p}"' for p in link_dirs_abs]
-                        flags_str = " ".join(path_flags)
-
-                    # Append to existing linker flags if present, or add new ones
-                    def update_flag(args, flag_name, new_val):
-                        found = False
-                        for i, arg in enumerate(args):
-                            if arg.startswith(f"{flag_name}="):
-                                args[i] = f"{arg} {new_val}"
-                                found = True
-                        if not found:
-                            args.append(f"{flag_name}={new_val}")
-
-                    update_flag(cmake_args, "-DCMAKE_EXE_LINKER_FLAGS", flags_str)
-                    update_flag(cmake_args, "-DCMAKE_SHARED_LINKER_FLAGS", flags_str)
-
-                # Check if we should skip configure (only run build)
-                if args.build and is_build_dir_valid(build_dir):
-                    print(
-                        f"--- Skipping CMake configure for {dep.name} [{build_type}] ---"
-                    )
+                if temp_dir and temp_dir.strip():
+                    build_dir_name = f"{dep.name}_{config['name']}"
+                    if IS_WINDOWS and args.llvm:
+                        build_dir_name = f"{dep.name}_llvm_{config['name']}"
+                    build_dir = os.path.join(root_dir, temp_dir.strip(), build_dir_name)
+                    # Ensure temp_dir parent directory exists
+                    os.makedirs(os.path.dirname(build_dir), exist_ok=True)
                 else:
-                    # Run configure (either not in --build mode or build dir doesn't exist)
-                    if args.build:
+                    prefix = "build_llvm" if IS_WINDOWS and args.llvm else "build"
+                    build_dir = os.path.join(dep_dir, f"{prefix}_{config['name']}")
+
+                output_lib_dir = os.path.join(
+                    root_dir, "lib", f"{platform_subdir}_{config['name']}"
+                )
+                output_tools_dir = os.path.join(
+                    root_dir, "tools", f"{platform_subdir}_{config['name']}"
+                )
+
+                if not os.path.exists(output_lib_dir):
+                    os.makedirs(output_lib_dir)
+
+                if (
+                    dep.executables or dep.extra_files or dep.install
+                ) and not os.path.exists(output_tools_dir):
+                    os.makedirs(output_tools_dir)
+
+                # Environment Setup
+                build_env = env.copy()
+
+                if dep.build:
+                    # Interpolate variables in cmake_options for this config
+                    final_cmake_options = []
+                    for opt in dep.cmake_options:
+                        if isinstance(opt, str):
+                            opt = opt.replace("${ROOT_DIR}", root_dir_cmake)
+                            opt = opt.replace("${PLATFORM_SUBDIR}", platform_subdir)
+                            opt = opt.replace("${CONFIG_NAME}", config["name"])
+                        final_cmake_options.append(opt)
+
+                    # CMake Configure
+                    cmake_args = (
+                        ["cmake", "-S", ".", "-B", build_dir]
+                        + get_platform_cmake_args(
+                            cxx_standard=dep.cxx_standard, use_llvm=args.llvm
+                        )
+                        + [f"-DCMAKE_BUILD_TYPE={build_type}"]
+                        + final_cmake_options
+                    )
+
+                    # Resolve library paths for Linker Flags (Bypassing MSBuild env sanitization)
+                    link_dirs_abs = [output_lib_dir]
+                    for p in dep.extra_link_dirs:
+                        if is_absolute_path(p):
+                            link_dirs_abs.append(p)
+                        else:
+                            link_dirs_abs.append(os.path.join(root_dir, p))
+
+                    if link_dirs_abs:
+                        if IS_WINDOWS:
+                            # Windows (MSVC)
+                            path_flags = [f'/LIBPATH:"{p}"' for p in link_dirs_abs]
+                            flags_str = " ".join(path_flags)
+                        else:
+                            # Linux/macOS
+                            path_flags = [f'-L"{p}"' for p in link_dirs_abs]
+                            flags_str = " ".join(path_flags)
+
+                        # Append to existing linker flags if present, or add new ones
+                        def update_flag(args, flag_name, new_val):
+                            found = False
+                            for i, arg in enumerate(args):
+                                if arg.startswith(f"{flag_name}="):
+                                    args[i] = f"{arg} {new_val}"
+                                    found = True
+                            if not found:
+                                args.append(f"{flag_name}={new_val}")
+
+                        update_flag(cmake_args, "-DCMAKE_EXE_LINKER_FLAGS", flags_str)
+                        update_flag(
+                            cmake_args, "-DCMAKE_SHARED_LINKER_FLAGS", flags_str
+                        )
+
+                    # Check if we should skip configure (only run build)
+                    if args.build and is_build_dir_valid(build_dir):
                         print(
-                            f"Warning: Build directory not valid at {build_dir}, running configure anyway..."
+                            f"--- Skipping CMake configure for {dep.name} [{build_type}] ---"
                         )
-                    run_command(cmake_args, cwd=dep_dir, env=build_env)
-
-                # Multi-Config generators (like VS) require --config
-                build_cmd = ["cmake", "--build", build_dir, "--parallel"]
-                if IS_WINDOWS:
-                    build_cmd.extend(["--config", build_type])
-
-                run_command(build_cmd, cwd=dep_dir, env=build_env)
-            else:
-                print(f"--- Skipping build for {dep.name} (build=false) ---")
-
-            # Copy Artifacts (Libs)
-            print(f"--- Copying artefacts to {output_lib_dir} ---")
-
-            # Determine where to search for artifacts
-            search_root = build_dir if dep.build else dep_dir
-            found_files = []
-
-            # Find all relevant files in search root (recursive)
-            found_files = glob.glob(
-                os.path.join(search_root, "**", "*"), recursive=True
-            )
-
-            if not found_files and not dep.build:
-                # Only warn if we expected to find something in a no-build scenario and failed completely
-                # For build scenarios, the build might have failed earlier or we rely on bin/lib fallback
-                pass
-
-            # Also search in the 'bin' and 'lib' directories of the dependency if they exist (e.g. Slang)
-            # This is preserved for backward compatibility and for finding prebuilt binaries in source tree
-            bin_dir = os.path.join(dep_dir, "bin")
-            if os.path.exists(bin_dir):
-                found_files.extend(
-                    glob.glob(os.path.join(bin_dir, "**", "*"), recursive=True)
-                )
-
-            lib_dir = os.path.join(dep_dir, "lib")
-            if os.path.exists(lib_dir):
-                found_files.extend(
-                    glob.glob(os.path.join(lib_dir, "**", "*"), recursive=True)
-                )
-
-            copied_count = 0
-
-            # --- Install Rules ---
-            if dep.install:
-                for rule in dep.install:
-                    pattern = rule.get("pattern")
-                    target = rule.get("target")
-                    if not pattern or not target:
-                        print(f"Warning: Invalid install rule in {dep.name}: {rule}")
-                        continue
-
-                    # Interpolate variables in target
-                    # ${PLATFORM_SUBDIR} -> win, win_llvm, linux, mac
-                    # ${CONFIG_NAME} -> debug, release
-                    # ${ROOT_DIR} -> absolute path to vdeps.py directory
-                    target = target.replace("${PLATFORM_SUBDIR}", platform_subdir)
-                    target = target.replace("${CONFIG_NAME}", config["name"])
-                    target = target.replace("${ROOT_DIR}", root_dir_cmake)
-
-                    # Resolve target directory (relative to root_dir/tools or root_dir/lib usually, but config says target is 'lib' or 'tools')
-                    # We map 'lib' -> output_lib_dir, 'tools' -> output_tools_dir
-                    # Subdirectories are allowed: 'tools/data'
-
-                    target_norm = target.replace("\\", "/")
-                    parts = target_norm.split("/")
-                    target_base = parts[0]
-                    target_subdir = "/".join(parts[1:])
-
-                    if target_base == "lib":
-                        dest_dir = output_lib_dir
-                    elif target_base == "tools":
-                        dest_dir = output_tools_dir
                     else:
-                        # Arbitrary path relative to root_dir
-                        dest_dir = os.path.join(root_dir, target)
-                        target_subdir = ""
+                        # Run configure (either not in --build mode or build dir doesn't exist)
+                        if args.build:
+                            print(
+                                f"Warning: Build directory not valid at {build_dir}, running configure anyway..."
+                            )
+                        run_command(cmake_args, cwd=dep_dir, env=build_env)
 
-                    if target_subdir:
-                        dest_dir = os.path.join(dest_dir, target_subdir)
+                    # Multi-Config generators (like VS) require --config
+                    build_cmd = ["cmake", "--build", build_dir, "--parallel"]
+                    if IS_WINDOWS:
+                        build_cmd.extend(["--config", build_type])
 
-                    if not os.path.exists(dest_dir):
-                        os.makedirs(dest_dir)
+                    run_command(build_cmd, cwd=dep_dir, env=build_env)
+                else:
+                    print(f"--- Skipping build for {dep.name} (build=false) ---")
 
-                    # Glob pattern relative to search_root
-                    # Note: glob.glob with recursive=True requires ** in pattern if using recursive
-                    # Here we assume pattern is relative to search_root
-                    full_pattern = os.path.join(search_root, pattern)
-                    install_files = glob.glob(full_pattern, recursive=True)
+                # Copy Artifacts (Libs)
+                print(f"--- Copying artefacts to {output_lib_dir} ---")
 
-                    for src in install_files:
-                        if os.path.isdir(src):
+                # Determine where to search for artifacts
+                search_root = build_dir if dep.build else dep_dir
+                found_files = []
+
+                # Find all relevant files in search root (recursive)
+                found_files = glob.glob(
+                    os.path.join(search_root, "**", "*"), recursive=True
+                )
+
+                if not found_files and not dep.build:
+                    # Only warn if we expected to find something in a no-build scenario and failed completely
+                    # For build scenarios, the build might have failed earlier or we rely on bin/lib fallback
+                    pass
+
+                # Also search in the 'bin' and 'lib' directories of the dependency if they exist (e.g. Slang)
+                # This is preserved for backward compatibility and for finding prebuilt binaries in source tree
+                bin_dir = os.path.join(dep_dir, "bin")
+                if os.path.exists(bin_dir):
+                    found_files.extend(
+                        glob.glob(os.path.join(bin_dir, "**", "*"), recursive=True)
+                    )
+
+                lib_dir = os.path.join(dep_dir, "lib")
+                if os.path.exists(lib_dir):
+                    found_files.extend(
+                        glob.glob(os.path.join(lib_dir, "**", "*"), recursive=True)
+                    )
+
+                copied_count = 0
+
+                # --- Install Rules ---
+                if dep.install:
+                    for rule in dep.install:
+                        pattern = rule.get("pattern")
+                        target = rule.get("target")
+                        if not pattern or not target:
+                            print(
+                                f"Warning: Invalid install rule in {dep.name}: {rule}"
+                            )
                             continue
-                        print(f"Installing {os.path.basename(src)} to {target}...")
-                        shutil.copy2(src, os.path.join(dest_dir, os.path.basename(src)))
-                        copied_count += 1
 
-            extensions = [LIB_EXT, ".dylib", ".so"]
-            if IS_WINDOWS:
-                extensions.append(".pdb")
-                extensions.append(".dll")
+                        # Interpolate variables in target
+                        # ${PLATFORM_SUBDIR} -> win, win_llvm, linux, mac
+                        # ${CONFIG_NAME} -> debug, release
+                        # ${ROOT_DIR} -> absolute path to vdeps.py directory
+                        target = target.replace("${PLATFORM_SUBDIR}", platform_subdir)
+                        target = target.replace("${CONFIG_NAME}", config["name"])
+                        target = target.replace("${ROOT_DIR}", root_dir_cmake)
 
-            for file_path in found_files:
-                if os.path.isdir(file_path):
-                    continue
-                filename = os.path.basename(file_path)
-                name_no_ext = os.path.splitext(filename)[0]
-                ext = os.path.splitext(filename)[1]
+                        # Resolve target directory (relative to root_dir/tools or root_dir/lib usually, but config says target is 'lib' or 'tools')
+                        # We map 'lib' -> output_lib_dir, 'tools' -> output_tools_dir
+                        # Subdirectories are allowed: 'tools/data'
 
-                # --- Libs ---
-                should_copy_lib = False
+                        target_norm = target.replace("\\", "/")
+                        parts = target_norm.split("/")
+                        target_base = parts[0]
+                        target_subdir = "/".join(parts[1:])
 
-                is_lib_artifact = False
-                if ext in extensions:
-                    is_lib_artifact = True
-                elif not IS_WINDOWS:
-                    # Handle versioned shared libraries on Linux/Mac (e.g. .so.1 or .1.dylib)
-                    if ".so." in filename or (
-                        ".dylib" in filename
-                        and filename.endswith(ext)
-                        and ext != ".dylib"
-                    ):
+                        if target_base == "lib":
+                            dest_dir = output_lib_dir
+                        elif target_base == "tools":
+                            dest_dir = output_tools_dir
+                        else:
+                            # Arbitrary path relative to root_dir
+                            dest_dir = os.path.join(root_dir, target)
+                            target_subdir = ""
+
+                        if target_subdir:
+                            dest_dir = os.path.join(dest_dir, target_subdir)
+
+                        if not os.path.exists(dest_dir):
+                            os.makedirs(dest_dir)
+
+                        # Glob pattern relative to search_root
+                        # Note: glob.glob with recursive=True requires ** in pattern if using recursive
+                        # Here we assume pattern is relative to search_root
+                        full_pattern = os.path.join(search_root, pattern)
+                        install_files = glob.glob(full_pattern, recursive=True)
+
+                        for src in install_files:
+                            if os.path.isdir(src):
+                                continue
+                            print(f"Installing {os.path.basename(src)} to {target}...")
+                            shutil.copy2(
+                                src, os.path.join(dest_dir, os.path.basename(src))
+                            )
+                            copied_count += 1
+
+                extensions = [LIB_EXT, ".dylib", ".so"]
+                if IS_WINDOWS:
+                    extensions.append(".pdb")
+                    extensions.append(".dll")
+
+                for file_path in found_files:
+                    if os.path.isdir(file_path):
+                        continue
+                    filename = os.path.basename(file_path)
+                    name_no_ext = os.path.splitext(filename)[0]
+                    ext = os.path.splitext(filename)[1]
+
+                    # --- Libs ---
+                    should_copy_lib = False
+
+                    is_lib_artifact = False
+                    if ext in extensions:
                         is_lib_artifact = True
+                    elif not IS_WINDOWS:
+                        # Handle versioned shared libraries on Linux/Mac (e.g. .so.1 or .1.dylib)
+                        if ".so." in filename or (
+                            ".dylib" in filename
+                            and filename.endswith(ext)
+                            and ext != ".dylib"
+                        ):
+                            is_lib_artifact = True
 
-                if is_lib_artifact:
-                    if dep.libs is None:
-                        should_copy_lib = True
-                    else:
-                        for base_name in dep.libs:
-                            if (
-                                name_no_ext == base_name
-                                or name_no_ext == f"lib{base_name}"
-                                or filename.startswith(f"lib{base_name}.so")
-                                or filename.startswith(f"{base_name}.so")
-                            ):
-                                should_copy_lib = True
-                                break
+                    if is_lib_artifact:
+                        if dep.libs is None:
+                            should_copy_lib = True
+                        else:
+                            for base_name in dep.libs:
+                                if (
+                                    name_no_ext == base_name
+                                    or name_no_ext == f"lib{base_name}"
+                                    or filename.startswith(f"lib{base_name}.so")
+                                    or filename.startswith(f"{base_name}.so")
+                                ):
+                                    should_copy_lib = True
+                                    break
 
-                if should_copy_lib:
-                    print(f"Copying lib {filename}...")
-                    shutil.copy2(file_path, os.path.join(output_lib_dir, filename))
-                    copied_count += 1
-
-                # --- Executables ---
-                if dep.executables:
-                    should_copy_exe = False
-                    exe_ext = ".exe" if IS_WINDOWS else ""
-
-                    if ext == exe_ext or (IS_WINDOWS and ext == ".pdb"):
-                        # Check against executable names
-                        # For PDBs on windows, we match the basename of the exe
-                        for base_name in dep.executables:
-                            if name_no_ext == base_name:
-                                should_copy_exe = True
-                                break
-
-                    # On Linux, executables have no extension, so we check name match and executable permission (implied by being a build artifact usually, but name match is key)
-                    # If extension is empty and we are not on windows, match exact name
-                    if not IS_WINDOWS and ext == "":
-                        for base_name in dep.executables:
-                            if filename == base_name:
-                                should_copy_exe = True
-                                break
-
-                    if should_copy_exe:
-                        print(f"Copying tool {filename}...")
-                        shutil.copy2(
-                            file_path, os.path.join(output_tools_dir, filename)
-                        )
+                    if should_copy_lib:
+                        print(f"Copying lib {filename}...")
+                        shutil.copy2(file_path, os.path.join(output_lib_dir, filename))
                         copied_count += 1
 
-                # --- Extra Files ---
-                if dep.extra_files:
-                    if filename in dep.extra_files:
-                        print(f"Copying extra file {filename} to tools...")
-                        shutil.copy2(
-                            file_path, os.path.join(output_tools_dir, filename)
-                        )
-                        copied_count += 1
+                    # --- Executables ---
+                    if dep.executables:
+                        should_copy_exe = False
+                        exe_ext = ".exe" if IS_WINDOWS else ""
 
-            if copied_count == 0:
-                print(f"Warning: No artifacts copied for {dep.name} [{config['type']}]")
+                        if ext == exe_ext or (IS_WINDOWS and ext == ".pdb"):
+                            # Check against executable names
+                            # For PDBs on windows, we match the basename of the exe
+                            for base_name in dep.executables:
+                                if name_no_ext == base_name:
+                                    should_copy_exe = True
+                                    break
+
+                        # On Linux, executables have no extension, so we check name match and executable permission (implied by being a build artifact usually, but name match is key)
+                        # If extension is empty and we are not on windows, match exact name
+                        if not IS_WINDOWS and ext == "":
+                            for base_name in dep.executables:
+                                if filename == base_name:
+                                    should_copy_exe = True
+                                    break
+
+                        if should_copy_exe:
+                            print(f"Copying tool {filename}...")
+                            shutil.copy2(
+                                file_path, os.path.join(output_tools_dir, filename)
+                            )
+                            copied_count += 1
+
+                    # --- Extra Files ---
+                    if dep.extra_files:
+                        if filename in dep.extra_files:
+                            print(f"Copying extra file {filename} to tools...")
+                            shutil.copy2(
+                                file_path, os.path.join(output_tools_dir, filename)
+                            )
+                            copied_count += 1
+
+                if copied_count == 0:
+                    print(
+                        f"Warning: No artifacts copied for {dep.name} [{config['type']}]"
+                    )
+        finally:
+            if dep.patches:
+                print(f"--- Reverting patches for {dep.name} ---")
+                revert_patches(dep_dir, dep.patches)
 
     if args.build:
         print(
