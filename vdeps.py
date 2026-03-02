@@ -181,7 +181,7 @@ def get_llvm_tool_path(name):
     ext = ".exe" if IS_WINDOWS else ""
     full_name = f"{name}{ext}"
     path = shutil.which(full_name)
-    return path.replace(os.sep, "/") if path else name
+    return path.replace("\\", "/") if path else name
 
 
 def get_platform_cmake_args(cxx_standard=20, use_llvm=False):
@@ -699,7 +699,7 @@ def main():
                 if IS_WINDOWS:
                     extensions.append(".pdb")
                     extensions.append(".dll")
-
+                    extensions.append(".lib")  # Ensure .lib is included when mocking Windows on Linux
                 for file_path in found_files:
                     if os.path.isdir(file_path):
                         continue
