@@ -51,7 +51,8 @@ def test_cmake_options_variable_interpolation(mock_subproc, mock_shutil):
         patch('os.makedirs'),
         patch('sys.platform', 'win32'),
         patch('vdeps.IS_WINDOWS', True),
-        patch('vdeps.PLATFORM_TAG', 'win')
+        patch('vdeps.PLATFORM_TAG', 'win'),
+        patch('shutil.which', return_value="/usr/bin/dummy")
     ):
         vdeps.main()
 

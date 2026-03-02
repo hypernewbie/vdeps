@@ -62,7 +62,8 @@ def test_install_target_variables(mock_subproc, mock_shutil):
         patch('os.makedirs'),
         patch('sys.platform', 'win32'),
         patch('vdeps.IS_WINDOWS', True),
-        patch('vdeps.PLATFORM_TAG', 'win')
+        patch('vdeps.PLATFORM_TAG', 'win'),
+        patch('shutil.which', return_value="/usr/bin/dummy")
     ):
         vdeps.main()
 
