@@ -23,9 +23,39 @@ python vdeps.py nvrhi assimp
 # Skip project regeneration if build exists (--build flag)
 python vdeps.py --build
 python vdeps.py nvrhi --build
+
+# Generate a thin CMake wrapper at vdeps/CMakeLists.txt
+python vdeps.py --generate-cmake
 ```
 
 **Dependency selection:** Build specific dependencies by name. Names are case-insensitive and must match entries in `vdeps.toml`. Invalid characters are rejected.
+
+`--generate-cmake` reads `vdeps.toml`, writes `vdeps/CMakeLists.txt`, and exits without building anything. It is incompatible with `--build`, `--clean`, positional dependency names, and `--llvm`.
+
+## Generated CMake Wrapper
+
+`python vdeps.py --generate-cmake` creates `vdeps/CMakeLists.txt` for parent projects to consume with `add_subdirectory(vdeps)`.
+
+```cmake
+add_subdirectory(vdeps)
+add_dependencies(my_app vdeps_nvrhi)
+```
+
+You can also depend on the aggregate target if you want all configured dependencies built:
+
+```cmake
+add_subdirectory(vdeps)
+add_dependencies(my_app vdeps_all)
+```
+
+On Windows, the generated wrapper exposes an optional cache toggle for forwarding `--llvm` to `vdeps.py`:
+
+```cmake
+set(VDEPS_USE_LLVM ON CACHE BOOL "" FORCE)
+add_subdirectory(vdeps)
+```
+
+This wrapper is build orchestration only in v1. It does not create imported CMake targets, propagate include directories, or add link instructions automatically, so linking remains manual.
 
 ## Configuration
 
