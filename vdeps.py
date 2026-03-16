@@ -153,7 +153,7 @@ def apply_patches(dep_dir, patches):
 
 
 def revert_patches(dep_dir, patches):
-    for patch in patches:
+    for patch in reversed(patches):
         target_file = os.path.join(dep_dir, patch["file"])
         if not os.path.exists(target_file):
             continue
@@ -626,7 +626,14 @@ def get_clean_git_head(dep_dir):
 
 
 def evaluate_auto_skip(
-    dep, dep_dir, root_dir, state_data, platform_subdir, config_name, git_head, git_reason
+    dep,
+    dep_dir,
+    root_dir,
+    state_data,
+    platform_subdir,
+    config_name,
+    git_head,
+    git_reason,
 ):
     if not dep.build:
         return False, "dependency build=false"
@@ -1080,16 +1087,16 @@ def main():
                                 continue
                             dest_path = os.path.join(dest_dir, os.path.basename(src))
                             print(f"Installing {os.path.basename(src)} to {target}...")
-                            copy_tracked_file(
-                                src, dest_path, root_dir, copied_outputs
-                            )
+                            copy_tracked_file(src, dest_path, root_dir, copied_outputs)
                             copied_count += 1
 
                 extensions = [LIB_EXT, ".dylib", ".so"]
                 if IS_WINDOWS:
                     extensions.append(".pdb")
                     extensions.append(".dll")
-                    extensions.append(".lib")  # Ensure .lib is included when mocking Windows on Linux
+                    extensions.append(
+                        ".lib"
+                    )  # Ensure .lib is included when mocking Windows on Linux
                 for file_path in found_files:
                     if os.path.isdir(file_path):
                         continue
