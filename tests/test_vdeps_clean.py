@@ -15,7 +15,7 @@ def test_clean_cancelled(capsys):
     assert "Clean cancelled." in captured.out
 
 def test_clean_success(capsys, tmp_path):
-    """Test that clean removes build directories when confirmed."""
+    """Test that clean removes build directories and state when confirmed."""
     # Setup a dummy project structure
     root = tmp_path
     vdeps_dir = root / "vdeps"
@@ -33,6 +33,9 @@ def test_clean_success(capsys, tmp_path):
     temp_dir.mkdir()
     dep_temp_build = temp_dir / "test_dep_debug"
     dep_temp_build.mkdir()
+
+    state_file = root / ".vdeps-state.json"
+    state_file.write_text('{"schema_version": 1, "records": {}}', encoding="utf-8")
     
     # Create a vdeps.toml
     toml_content = """
@@ -59,6 +62,8 @@ def test_clean_success(capsys, tmp_path):
     assert not build_release.exists()
     # Verify temp dir is gone
     assert not temp_dir.exists()
+    assert not state_file.exists()
     
     captured = capsys.readouterr()
+    assert "Removing state file" in captured.out
     assert "Clean complete." in captured.out

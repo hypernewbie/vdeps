@@ -45,14 +45,16 @@ def test_cmake_options_variable_interpolation(mock_subproc, mock_shutil):
     # Mock context: Windows with LLVM
     with (
         patch('vdeps.tomllib.load', return_value=mock_toml_data),
-        patch('os.path.exists', return_value=True),
+        patch('vdeps.os.path.exists', return_value=True),
         patch('sys.argv', ['vdeps.py', '--llvm', 'VarOptionsDep']),
         patch('glob.glob', side_effect=mock_glob),
-        patch('os.makedirs'),
-        patch('sys.platform', 'win32'),
+        patch('vdeps.os.makedirs'),
         patch('vdeps.IS_WINDOWS', True),
         patch('vdeps.PLATFORM_TAG', 'win'),
-        patch('shutil.which', return_value="/usr/bin/dummy")
+        patch(
+            'vdeps.get_llvm_tool_path',
+            side_effect=lambda name: f"/mock/{name}.exe",
+        ),
     ):
         vdeps.main()
 

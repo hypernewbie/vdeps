@@ -8,22 +8,32 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 import vdeps
 
+def test_resolve_executable_path():
+    """Test that executable lookup normalizes separators and returns None when missing."""
+    with patch('vdeps.shutil.which', return_value="C:\\LLVM\\bin\\clang-cl.exe"):
+        path = vdeps.resolve_executable_path("clang-cl.exe")
+        assert path == "C:/LLVM/bin/clang-cl.exe"
+
+    with patch('vdeps.shutil.which', return_value=None):
+        path = vdeps.resolve_executable_path("clang-cl.exe")
+        assert path is None
+
 def test_get_llvm_tool_path():
     """Test that LLVM tool paths are correctly resolved or fallback to name."""
     with patch('vdeps.IS_WINDOWS', True), \
-         patch('vdeps.shutil.which', return_value="C:\\LLVM\\bin\\clang-cl.exe"):
+         patch('vdeps.resolve_executable_path', return_value="C:/LLVM/bin/clang-cl.exe"):
         path = vdeps.get_llvm_tool_path("clang-cl")
         assert path == "C:/LLVM/bin/clang-cl.exe"
 
     with patch('vdeps.IS_WINDOWS', True), \
-         patch('vdeps.shutil.which', return_value=None):
+         patch('vdeps.resolve_executable_path', return_value=None):
         path = vdeps.get_llvm_tool_path("clang-cl")
         assert path == "clang-cl"
 
 def test_get_platform_cmake_args_windows_llvm():
     """Test that --llvm on Windows produces correct Clang+Ninja args with paths."""
     with patch('vdeps.IS_WINDOWS', True), \
-         patch('vdeps.shutil.which', side_effect=lambda x: f"C:\\LLVM\\bin\\{x}"):
+         patch('vdeps.resolve_executable_path', side_effect=lambda x: f"C:/LLVM/bin/{x}"):
         args = vdeps.get_platform_cmake_args(cxx_standard=20, use_llvm=True)
         
         # Check for Ninja generator

@@ -7,3 +7,4 @@ lib/
 tools/
 .coverage
 vdeps.egg-info/
+.vdeps-state.json

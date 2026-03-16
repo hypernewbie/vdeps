@@ -24,17 +24,27 @@ python vdeps.py nvrhi assimp
 python vdeps.py --build
 python vdeps.py nvrhi --build
 
+# Skip rebuilding when copied outputs still exist and dependency HEAD is unchanged
+python vdeps.py --auto-skip
+
+# Combine with --build for fast incremental runs
+python vdeps.py --build --auto-skip
+
 # Generate a thin CMake wrapper at vdeps/CMakeLists.txt
 python vdeps.py --generate-cmake
 ```
 
+Tip: add .vdeps-state.json to your project's .gitignore to avoid committing local auto-skip state.
+
 **Dependency selection:** Build specific dependencies by name. Names are case-insensitive and must match entries in `vdeps.toml`. Invalid characters are rejected.
 
-`--generate-cmake` reads `vdeps.toml`, writes `vdeps/CMakeLists.txt`, and exits without building anything. It is incompatible with `--build`, `--clean`, positional dependency names, and `--llvm`.
+`--generate-cmake` reads `vdeps.toml`, writes `vdeps/CMakeLists.txt`, and exits without building anything. It is incompatible with `--build`, `--clean`, `--auto-skip`, positional dependency names, and `--llvm`.
+
+`--auto-skip` only skips for clean git repos under `vdeps/`; dirty repos or non-git directories fall back to normal builds.
 
 ## Generated CMake Wrapper
 
-`python vdeps.py --generate-cmake` creates `vdeps/CMakeLists.txt` for parent projects to consume with `add_subdirectory(vdeps)`.
+`python vdeps.py --generate-cmake` creates `vdeps/CMakeLists.txt` for parent projects to consume with `add_subdirectory(vdeps)`. Generated targets always run `vdeps.py --build --auto-skip <dep>` so parent CMake builds are fast by default; if you need a forced rebuild or unusual troubleshooting, run `vdeps.py` directly.
 
 ```cmake
 add_subdirectory(vdeps)
