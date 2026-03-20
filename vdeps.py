@@ -141,13 +141,13 @@ def apply_patches(dep_dir, patches):
         if not os.path.exists(target_file):
             print(f"Warning: Patch target not found: {target_file}")
             continue
-        with open(target_file, "r", encoding="utf-8") as f:
+        with open(target_file, "r", encoding="utf-8", newline="") as f:
             content = f.read()
         if patch["search"] not in content:
             print(f"Warning: Patch search string not found in {target_file}")
             continue
         content = content.replace(patch["search"], patch["replace"], 1)
-        with open(target_file, "w", encoding="utf-8") as f:
+        with open(target_file, "w", encoding="utf-8", newline="") as f:
             f.write(content)
         print(f"Patched: {patch['file']}")
 
@@ -157,10 +157,10 @@ def revert_patches(dep_dir, patches):
         target_file = os.path.join(dep_dir, patch["file"])
         if not os.path.exists(target_file):
             continue
-        with open(target_file, "r", encoding="utf-8") as f:
+        with open(target_file, "r", encoding="utf-8", newline="") as f:
             content = f.read()
         content = content.replace(patch["replace"], patch["search"], 1)
-        with open(target_file, "w", encoding="utf-8") as f:
+        with open(target_file, "w", encoding="utf-8", newline="") as f:
             f.write(content)
         print(f"Reverted patch: {patch['file']}")
 

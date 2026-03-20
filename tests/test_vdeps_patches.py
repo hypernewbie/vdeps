@@ -326,7 +326,9 @@ def test_patch_idempotency():
 
 def test_multiline_patch():
     """Test patches that span multiple lines."""
-    with tempfile.NamedTemporaryFile(mode="w", delete=False, encoding="utf-8") as f:
+    with tempfile.NamedTemporaryFile(
+        mode="w", delete=False, encoding="utf-8", newline=""
+    ) as f:
         f.write("line1\nOLD_CONTENT\nline3")
         temp_file = f.name
 
@@ -338,11 +340,11 @@ def test_multiline_patch():
         }
 
         vdeps.apply_patches(os.path.dirname(temp_file), [patch])
-        with open(temp_file, "r", encoding="utf-8") as f:
+        with open(temp_file, "r", encoding="utf-8", newline="") as f:
             assert f.read() == "line1\nNEW_CONTENT\nline3"
 
         vdeps.revert_patches(os.path.dirname(temp_file), [patch])
-        with open(temp_file, "r", encoding="utf-8") as f:
+        with open(temp_file, "r", encoding="utf-8", newline="") as f:
             assert f.read() == "line1\nOLD_CONTENT\nline3"
     finally:
         os.unlink(temp_file)
