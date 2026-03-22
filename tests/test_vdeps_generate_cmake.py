@@ -15,8 +15,9 @@ def write_config(root, content):
 
 
 def run_main(root, argv):
-    with patch("sys.argv", ["vdeps.py", *argv]), patch(
-        "vdeps.__file__", str(root / "vdeps.py")
+    with (
+        patch("sys.argv", ["vdeps.py", *argv]),
+        patch("vdeps.__file__", str(root / "vdeps.py")),
     ):
         vdeps.main()
 
@@ -57,29 +58,24 @@ cmake_options = []
         in content
     )
     assert "find_package(Python3 REQUIRED COMPONENTS Interpreter)" in content
-    assert 'option(VDEPS_USE_LLVM "Pass --llvm to vdeps.py on Windows" OFF)' in content
-    assert "set(_vdeps_extra_args)" in content
-    assert "if(WIN32 AND VDEPS_USE_LLVM)" in content
-    assert "list(APPEND _vdeps_extra_args --llvm)" in content
-
-    assert "add_custom_target(vdeps_nvrhi" in content
-    assert "add_custom_target(vdeps_shadermake" in content
-    assert "add_custom_target(vdeps_vk_bootstrap" in content
-    assert 'COMMENT "Building vdeps dependency: ShaderMake"' in content
+    assert 'option(VDEPS_USE_LLVM "Use Clang/LLVM compiler on Windows" OFF)' in content
     assert (
-        'COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_LIST_DIR}/../vdeps.py" --build --auto-skip ${_vdeps_extra_args} "ShaderMake"'
+        'option(VDEPS_STATIC_RUNTIME "Build with static MSVC runtime (/MT, /MTd)" OFF)'
         in content
     )
     assert (
-        'COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_LIST_DIR}/../vdeps.py" --build --auto-skip ${_vdeps_extra_args} "vk-bootstrap"'
+        'option(VDEPS_DYNAMIC_RUNTIME "Build with dynamic MSVC runtime (/MD, /MDd)" OFF)'
         in content
     )
-    assert 'WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/.."' in content
+    assert "if(NOT VDEPS_STATIC_RUNTIME AND NOT VDEPS_DYNAMIC_RUNTIME)" in content
+    assert "set(VDEPS_STATIC_RUNTIME ON)" in content
+    assert "macro(vdeps_build_dep" in content
+    assert "add_custom_target(vdeps_all_mt)" in content
+    assert 'vdeps_build_dep(vdeps_nvrhi mt "")' in content
+    assert 'vdeps_build_dep(vdeps_shadermake mt "")' in content
+    assert 'vdeps_build_dep(vdeps_vk_bootstrap mt "")' in content
     assert "add_custom_target(vdeps_all)" in content
-    assert "add_dependencies(vdeps_all" in content
-    assert "    vdeps_nvrhi" in content
-    assert "    vdeps_shadermake" in content
-    assert "    vdeps_vk_bootstrap" in content
+    assert "add_dependencies(vdeps_all vdeps_all_mt)" in content
 
     mock_run.assert_not_called()
     mock_copy.assert_not_called()
@@ -139,8 +135,14 @@ cmake_options = []
 @pytest.mark.parametrize(
     ("argv", "message"),
     [
-        (["--generate-cmake", "--build"], "--generate-cmake cannot be used with --build"),
-        (["--generate-cmake", "--clean"], "--generate-cmake cannot be used with --clean"),
+        (
+            ["--generate-cmake", "--build"],
+            "--generate-cmake cannot be used with --build",
+        ),
+        (
+            ["--generate-cmake", "--clean"],
+            "--generate-cmake cannot be used with --clean",
+        ),
         (
             ["--generate-cmake", "nvrhi"],
             "--generate-cmake cannot be used with dependency names",

@@ -407,8 +407,8 @@ def test_auto_skip_md_does_not_match_static_state(tmp_path, capsys):
     )
 
 
-def test_generate_cmake_includes_dynamic_runtime_option(tmp_path):
-    """Test that --generate-cmake produces CMake with VDEPS_DYNAMIC_RUNTIME option."""
+def test_generate_cmake_includes_runtime_options(tmp_path):
+    """Test that --generate-cmake produces CMake with runtime options."""
     write_config(
         tmp_path,
         """
@@ -426,11 +426,19 @@ def test_generate_cmake_includes_dynamic_runtime_option(tmp_path):
     content = generated.read_text(encoding="utf-8")
 
     assert (
-        'option(VDEPS_DYNAMIC_RUNTIME "Pass --md to vdeps.py for dynamic MSVC runtime (/MD, /MDd)" OFF)'
+        'option(VDEPS_STATIC_RUNTIME "Build with static MSVC runtime (/MT, /MTd)" OFF)'
         in content
     )
-    assert "if(WIN32 AND VDEPS_DYNAMIC_RUNTIME)" in content
-    assert "list(APPEND _vdeps_extra_args --md)" in content
+    assert (
+        'option(VDEPS_DYNAMIC_RUNTIME "Build with dynamic MSVC runtime (/MD, /MDd)" OFF)'
+        in content
+    )
+    assert "if(NOT VDEPS_STATIC_RUNTIME AND NOT VDEPS_DYNAMIC_RUNTIME)" in content
+    assert "macro(vdeps_build_dep" in content
+    assert "add_custom_target(vdeps_all_mt" in content
+    assert 'vdeps_build_dep(vdeps_nvrhi mt "")' in content
+    assert "add_custom_target(vdeps_all_md" in content
+    assert 'vdeps_build_dep(vdeps_nvrhi md "--md")' in content
 
 
 def test_md_llvm_build_directory_name(tmp_path):

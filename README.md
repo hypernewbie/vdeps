@@ -38,7 +38,7 @@ Tip: add .vdeps-state.json to your project's .gitignore to avoid committing loca
 
 **Dependency selection:** Build specific dependencies by name. Names are case-insensitive and must match entries in `vdeps.toml`. Invalid characters are rejected.
 
-`--generate-cmake` reads `vdeps.toml`, writes `vdeps/CMakeLists.txt`, and exits without building anything. It is incompatible with `--build`, `--clean`, `--auto-skip`, positional dependency names, and `--llvm`.
+`--generate-cmake` reads `vdeps.toml`, writes `vdeps/CMakeLists.txt`, and exits without building anything. It is incompatible with `--build`, `--clean`, `--auto-skip`, positional dependency names, and `--llvm`. LLVM and runtime options are controlled via CMake cache variables in the generated wrapper, not CLI flags.
 
 `--auto-skip` only skips for clean git repos under `vdeps/`; dirty repos or non-git directories fall back to normal builds.
 
@@ -58,12 +58,45 @@ add_subdirectory(vdeps)
 add_dependencies(my_app vdeps_all)
 ```
 
-On Windows, the generated wrapper exposes an optional cache toggle for forwarding `--llvm` to `vdeps.py`:
+### CMake Options (Windows)
+
+The generated wrapper exposes cache toggles for MSVC runtime and compiler options:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `VDEPS_USE_LLVM` | OFF | Use Clang/LLVM compiler |
+| `VDEPS_STATIC_RUNTIME` | ON* | Build with `/MT` (static runtime) |
+| `VDEPS_DYNAMIC_RUNTIME` | OFF | Build with `/MD` (dynamic runtime) |
+
+*When neither `VDEPS_STATIC_RUNTIME` nor `VDEPS_DYNAMIC_RUNTIME` is set, `VDEPS_STATIC_RUNTIME` defaults to ON.
+
+**Build both runtimes for combined packages:**
+
+```cmake
+set(VDEPS_STATIC_RUNTIME ON CACHE BOOL "" FORCE)
+set(VDEPS_DYNAMIC_RUNTIME ON CACHE BOOL "" FORCE)
+add_subdirectory(vdeps)
+```
+
+**Build with LLVM and dynamic runtime:**
 
 ```cmake
 set(VDEPS_USE_LLVM ON CACHE BOOL "" FORCE)
+set(VDEPS_DYNAMIC_RUNTIME ON CACHE BOOL "" FORCE)
 add_subdirectory(vdeps)
 ```
+
+### Generated Targets
+
+| Target | Description |
+|--------|-------------|
+| `vdeps_all` | Top-level aggregate (depends on enabled variants) |
+| `vdeps_all_mt` | All deps with static runtime (/MT) |
+| `vdeps_all_md` | All deps with dynamic runtime (/MD) |
+| `vdeps_all_llvm_mt` | All deps with LLVM + static runtime |
+| `vdeps_all_llvm_md` | All deps with LLVM + dynamic runtime |
+| `vdeps_<name>_mt` | Individual dep with static runtime |
+| `vdeps_<name>_md` | Individual dep with dynamic runtime |
 
 This wrapper is build orchestration only in v1. It does not create imported CMake targets, propagate include directories, or add link instructions automatically, so linking remains manual.
 
@@ -131,15 +164,25 @@ root/
 │   ├── win_debug/
 │   ├── win_release/
 │   ├── win_llvm_debug/
-│   └── win_llvm_release/
+│   ├── win_llvm_release/
+│   ├── win_md_debug/
+│   ├── win_md_release/
+│   ├── win_llvm_md_debug/
+│   └── win_llvm_md_release/
 └── tools/
     ├── linux_debug/
     ├── linux_release/
     ├── win_debug/
     ├── win_release/
     ├── win_llvm_debug/
-    └── win_llvm_release/
+    ├── win_llvm_release/
+    ├── win_md_debug/
+    ├── win_md_release/
+    ├── win_llvm_md_debug/
+    └── win_llvm_md_release/
 ```
+
+The `_md` variants use dynamic MSVC runtime libraries (`/MD`, `/MDd`). The `_llvm_` prefix indicates Clang/LLVM builds.
 
 ## Platform-Specific Behaviour
 
