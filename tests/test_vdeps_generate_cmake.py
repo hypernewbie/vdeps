@@ -71,9 +71,9 @@ cmake_options = []
     assert "set(VDEPS_STATIC_RUNTIME ON)" in content
     assert "macro(vdeps_build_dep" in content
     assert "add_custom_target(vdeps_all_mt)" in content
-    assert 'vdeps_build_dep(vdeps_nvrhi mt "")' in content
-    assert 'vdeps_build_dep(vdeps_shadermake mt "")' in content
-    assert 'vdeps_build_dep(vdeps_vk_bootstrap mt "")' in content
+    assert 'vdeps_build_dep(vdeps_nvrhi nvrhi mt "")' in content
+    assert 'vdeps_build_dep(vdeps_shadermake ShaderMake mt "")' in content
+    assert 'vdeps_build_dep(vdeps_vk_bootstrap vk-bootstrap mt "")' in content
     assert "add_custom_target(vdeps_all)" in content
     assert "add_dependencies(vdeps_all vdeps_all_mt)" in content
 

@@ -436,9 +436,9 @@ def test_generate_cmake_includes_runtime_options(tmp_path):
     assert "if(NOT VDEPS_STATIC_RUNTIME AND NOT VDEPS_DYNAMIC_RUNTIME)" in content
     assert "macro(vdeps_build_dep" in content
     assert "add_custom_target(vdeps_all_mt" in content
-    assert 'vdeps_build_dep(vdeps_nvrhi mt "")' in content
+    assert 'vdeps_build_dep(vdeps_nvrhi nvrhi mt "")' in content
     assert "add_custom_target(vdeps_all_md" in content
-    assert 'vdeps_build_dep(vdeps_nvrhi md "--md")' in content
+    assert 'vdeps_build_dep(vdeps_nvrhi nvrhi md "--md")' in content
 
 
 def test_md_llvm_build_directory_name(tmp_path):
