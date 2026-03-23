@@ -8,3 +8,6 @@ tools/
 .coverage
 vdeps.egg-info/
 .vdeps-state.json
+
+# CMake build directories for test fixtures
+tests/fixtures/**/build/
