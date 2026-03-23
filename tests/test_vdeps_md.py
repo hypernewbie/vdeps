@@ -34,7 +34,7 @@ def test_get_platform_cmake_args_md_windows():
         args = vdeps.get_platform_cmake_args(cxx_standard=20, use_dynamic_runtime=True)
 
         runtime_flag = (
-            "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"
+            '-DCMAKE_MSVC_RUNTIME_LIBRARY="MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"'
         )
         assert runtime_flag in args, f"Expected {runtime_flag} in args, got {args}"
 
@@ -45,7 +45,7 @@ def test_get_platform_cmake_args_mt_windows():
         args = vdeps.get_platform_cmake_args(cxx_standard=20, use_dynamic_runtime=False)
 
         runtime_flag = (
-            "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>"
+            '-DCMAKE_MSVC_RUNTIME_LIBRARY="MultiThreaded$<$<CONFIG:Debug>:Debug>"'
         )
         assert runtime_flag in args
         assert "DLL" not in args[args.index(runtime_flag)]
@@ -64,7 +64,7 @@ def test_get_platform_cmake_args_md_with_llvm():
         )
 
         runtime_flag = (
-            "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"
+            '-DCMAKE_MSVC_RUNTIME_LIBRARY="MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"'
         )
         assert runtime_flag in args
         assert "-G" in args
