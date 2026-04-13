@@ -70,6 +70,9 @@ cmake_options = []
     assert "if(NOT VDEPS_STATIC_RUNTIME AND NOT VDEPS_DYNAMIC_RUNTIME)" in content
     assert "set(VDEPS_STATIC_RUNTIME ON)" in content
     assert "macro(vdeps_build_dep" in content
+    assert 'separate_arguments(_VDEPS_EXTRA_ARGS NATIVE_COMMAND "${EXTRA_ARGS}")' in content
+    assert "${_VDEPS_EXTRA_ARGS}" in content
+    assert "--auto-skip ${EXTRA_ARGS}" not in content
     assert "add_custom_target(vdeps_all_mt)" in content
     assert 'vdeps_build_dep(vdeps_nvrhi nvrhi mt "")' in content
     assert 'vdeps_build_dep(vdeps_shadermake ShaderMake mt "")' in content

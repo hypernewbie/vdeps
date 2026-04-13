@@ -88,8 +88,8 @@ def test_md_output_directory_name(tmp_path):
     (root / "vdeps.toml").write_text(toml_content)
 
     def mock_glob(pattern, recursive=False):
-        if "test_dep" in pattern and "build_debug" in pattern:
-            return [str(root / "vdeps/test_dep/build_debug/test_lib.lib")]
+        if "test_dep" in pattern and "build_md_debug" in pattern:
+            return [str(root / "vdeps/test_dep/build_md_debug/test_lib.lib")]
         return []
 
     with (
@@ -134,8 +134,8 @@ def test_llvm_md_combined_output_directory(tmp_path):
     (root / "vdeps.toml").write_text(toml_content)
 
     def mock_glob(pattern, recursive=False):
-        if "test_dep" in pattern and "build_llvm_debug" in pattern:
-            return [str(root / "vdeps/test_dep/build_llvm_debug/test_lib.lib")]
+        if "test_dep" in pattern and "build_llvm_md_debug" in pattern:
+            return [str(root / "vdeps/test_dep/build_llvm_md_debug/test_lib.lib")]
         return []
 
     with (
@@ -160,6 +160,82 @@ def test_llvm_md_combined_output_directory(tmp_path):
 
     assert found_win_llvm_md_output, (
         "Should copy to win_llvm_md_ directory when --llvm --md are both set"
+    )
+
+
+def test_md_build_directory_name(tmp_path):
+    """Test that --md uses build_md_ directory names on Windows."""
+    root = tmp_path
+    vdeps_dir = root / "vdeps"
+    dep_dir = vdeps_dir / "test_dep"
+    dep_dir.mkdir(parents=True)
+
+    toml_content = """
+    [[dependency]]
+    name = "test_dep"
+    rel_path = "test_dep"
+    cmake_options = []
+    """
+    (root / "vdeps.toml").write_text(toml_content)
+
+    with (
+        patch("vdeps.IS_WINDOWS", True),
+        patch("vdeps.PLATFORM_TAG", "win"),
+        patch("sys.argv", ["vdeps.py", "--md"]),
+        patch("vdeps.__file__", str(root / "vdeps.py")),
+        patch("vdeps.os.path.dirname", return_value=str(root)),
+        patch("vdeps.os.path.abspath", return_value=str(root / "vdeps.py")),
+        patch("vdeps.run_command") as mock_run,
+        patch("glob.glob", return_value=[]),
+    ):
+        vdeps.main()
+
+    found_md_dir = False
+    for call in mock_run.call_args_list:
+        cmd = call[0][0]
+        if any("build_md_" in arg for arg in cmd):
+            found_md_dir = True
+            break
+
+    assert found_md_dir, "Should use build_md_ prefix when --md is set on Windows"
+
+
+def test_llvm_md_combined_build_directory_name(tmp_path):
+    """Test that --llvm --md uses build_llvm_md_ directory names on Windows."""
+    root = tmp_path
+    vdeps_dir = root / "vdeps"
+    dep_dir = vdeps_dir / "test_dep"
+    dep_dir.mkdir(parents=True)
+
+    toml_content = """
+    [[dependency]]
+    name = "test_dep"
+    rel_path = "test_dep"
+    cmake_options = []
+    """
+    (root / "vdeps.toml").write_text(toml_content)
+
+    with (
+        patch("vdeps.IS_WINDOWS", True),
+        patch("vdeps.PLATFORM_TAG", "win"),
+        patch("sys.argv", ["vdeps.py", "--llvm", "--md"]),
+        patch("vdeps.__file__", str(root / "vdeps.py")),
+        patch("vdeps.os.path.dirname", return_value=str(root)),
+        patch("vdeps.os.path.abspath", return_value=str(root / "vdeps.py")),
+        patch("vdeps.run_command") as mock_run,
+        patch("glob.glob", return_value=[]),
+    ):
+        vdeps.main()
+
+    found_llvm_md_dir = False
+    for call in mock_run.call_args_list:
+        cmd = call[0][0]
+        if any("build_llvm_md_" in arg for arg in cmd):
+            found_llvm_md_dir = True
+            break
+
+    assert found_llvm_md_dir, (
+        "Should use build_llvm_md_ prefix when --llvm --md are both set on Windows"
     )
 
 
@@ -191,7 +267,7 @@ def test_md_build_writes_state_with_runtime_flag(tmp_path):
     dep_dir.mkdir(parents=True)
 
     for config in ("debug", "release"):
-        build_dir = dep_dir / f"build_{config}"
+        build_dir = dep_dir / f"build_md_{config}"
         build_dir.mkdir(parents=True)
         write_file(build_dir / "demo.lib", "lib")
 
@@ -497,8 +573,8 @@ def test_md_llvm_combined_platform_subdir(tmp_path):
     (root / "vdeps.toml").write_text(toml_content)
 
     def mock_glob(pattern, recursive=False):
-        if "test_dep" in pattern and "build_llvm_debug" in pattern:
-            return [str(root / "vdeps/test_dep/build_llvm_debug/test_lib.lib")]
+        if "test_dep" in pattern and "build_llvm_md_debug" in pattern:
+            return [str(root / "vdeps/test_dep/build_llvm_md_debug/test_lib.lib")]
         return []
 
     with (
