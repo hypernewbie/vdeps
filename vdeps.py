@@ -209,7 +209,13 @@ def get_compiler_info(use_llvm):
     else:
         exe_name = "clang"
 
-    raw_path = shutil.which(exe_name)
+    try:
+        raw_path = shutil.which(exe_name)
+    except (OSError, AttributeError):
+        # shutil.which calls into _winapi when sys.platform == "win32" but
+        # _winapi is None on non-Windows hosts; tests that patch sys.platform
+        # to simulate Windows can hit this. Treat as "compiler not found".
+        return None, None
     if not raw_path:
         return None, None
 
