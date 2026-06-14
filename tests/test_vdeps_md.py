@@ -51,6 +51,38 @@ def test_get_platform_cmake_args_mt_windows():
         assert "DLL" not in args[args.index(runtime_flag)]
 
 
+def test_get_platform_cmake_args_embedded_debug_info_windows():
+    """Test that Windows builds set CMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded (/Z7) for sccache."""
+    with patch("vdeps.IS_WINDOWS", True):
+        args = vdeps.get_platform_cmake_args(cxx_standard=20)
+
+        assert "-DCMAKE_POLICY_DEFAULT_CMP0141=NEW" in args
+        assert "-DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded" in args
+
+
+def test_get_platform_cmake_args_embedded_debug_info_with_llvm():
+    """Test that Windows+LLVM builds also set Embedded debug info."""
+    with (
+        patch("vdeps.IS_WINDOWS", True),
+        patch(
+            "vdeps.resolve_executable_path", side_effect=lambda x: f"C:/LLVM/bin/{x}"
+        ),
+    ):
+        args = vdeps.get_platform_cmake_args(cxx_standard=20, use_llvm=True)
+
+        assert "-DCMAKE_POLICY_DEFAULT_CMP0141=NEW" in args
+        assert "-DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded" in args
+
+
+def test_get_platform_cmake_args_no_embedded_debug_info_on_non_windows():
+    """Test that non-Windows builds do NOT set Windows-specific debug info flags."""
+    with patch("vdeps.IS_WINDOWS", False):
+        args = vdeps.get_platform_cmake_args(cxx_standard=20)
+
+        assert not any("CMAKE_MSVC_DEBUG_INFORMATION_FORMAT" in a for a in args)
+        assert not any("CMP0141" in a for a in args)
+
+
 def test_get_platform_cmake_args_md_with_llvm():
     """Test that use_dynamic_runtime=True works with use_llvm=True on Windows."""
     with (
@@ -345,7 +377,7 @@ def test_auto_skip_with_md_uses_correct_state_key(tmp_path):
         )()
 
     def mock_subprocess(
-        command, cwd=None, env=None, shell=False, capture_output=False, text=False
+        command, cwd=None, env=None, shell=False, capture_output=False, text=False, **kwargs
     ):
         if command[0] == "git":
             git_args = command[3:]
@@ -356,6 +388,13 @@ def test_auto_skip_with_md_uses_correct_state_key(tmp_path):
             if git_args == ["status", "--porcelain"]:
                 return completed(0, "")
         return completed(0)
+
+    md_toolchain = {
+        "compiler_path": "C:/fake/cl.exe",
+        "compiler_version": "fake-cl 1.0",
+        "use_llvm": False,
+        "use_dynamic_runtime": True,
+    }
 
     key_debug = vdeps.get_state_record_key(
         "demo", "demo", "win_md", "debug", use_dynamic_runtime=True
@@ -373,6 +412,7 @@ def test_auto_skip_with_md_uses_correct_state_key(tmp_path):
         "outputs": ["lib/win_md_debug/demo.lib"],
         "updated_at": "2026-03-15T12:34:56Z",
         "schema_version": vdeps.STATE_SCHEMA_VERSION,
+        "toolchain": dict(md_toolchain),
     }
     record_release = {
         "dep_name": "demo",
@@ -384,6 +424,7 @@ def test_auto_skip_with_md_uses_correct_state_key(tmp_path):
         "outputs": ["lib/win_md_release/demo.lib"],
         "updated_at": "2026-03-15T12:34:56Z",
         "schema_version": vdeps.STATE_SCHEMA_VERSION,
+        "toolchain": dict(md_toolchain),
     }
     state_data = {
         "schema_version": vdeps.STATE_SCHEMA_VERSION,
@@ -398,6 +439,7 @@ def test_auto_skip_with_md_uses_correct_state_key(tmp_path):
         patch("vdeps.PLATFORM_TAG", "win"),
         patch("vdeps.LIB_EXT", ".lib"),
         patch("subprocess.run", side_effect=mock_subprocess) as mock_run,
+        patch("vdeps.get_toolchain_fingerprint", return_value=dict(md_toolchain)),
     ):
         run_main(tmp_path, ["--auto-skip", "--md", "demo"])
 
