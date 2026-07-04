@@ -74,9 +74,9 @@ cmake_options = []
     assert "${_VDEPS_EXTRA_ARGS}" in content
     assert "--auto-skip ${EXTRA_ARGS}" not in content
     assert "add_custom_target(vdeps_all_mt)" in content
-    assert 'vdeps_build_dep(vdeps_nvrhi nvrhi mt "")' in content
-    assert 'vdeps_build_dep(vdeps_shadermake ShaderMake mt "")' in content
-    assert 'vdeps_build_dep(vdeps_vk_bootstrap vk-bootstrap mt "")' in content
+    assert 'vdeps_build_dep(vdeps_nvrhi nvrhi mt "${_VDEPS_EXTRA_ARGV}")' in content
+    assert 'vdeps_build_dep(vdeps_shadermake ShaderMake mt "${_VDEPS_EXTRA_ARGV}")' in content
+    assert 'vdeps_build_dep(vdeps_vk_bootstrap vk-bootstrap mt "${_VDEPS_EXTRA_ARGV}")' in content
     assert "add_custom_target(vdeps_all)" in content
     assert "add_dependencies(vdeps_all vdeps_all_mt)" in content
 

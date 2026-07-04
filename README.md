@@ -30,6 +30,15 @@ python vdeps.py --auto-skip
 # Combine with --build for fast incremental runs
 python vdeps.py --build --auto-skip
 
+# Cap parallel build workers on RAM-constrained boxes (default = all cores)
+python vdeps.py --parallel 4
+
+# Build with ThreadSanitizer / AddressSanitizer / MemorySanitizer / UBSan
+python vdeps.py --sanitize thread
+python vdeps.py --sanitize address
+python vdeps.py --sanitize memory
+python vdeps.py --sanitize thread,undefined
+
 # Generate a thin CMake wrapper at vdeps/CMakeLists.txt
 python vdeps.py --generate-cmake
 ```
@@ -67,8 +76,20 @@ The generated wrapper exposes cache toggles for MSVC runtime and compiler option
 | `VDEPS_USE_LLVM` | OFF | Use Clang/LLVM compiler |
 | `VDEPS_STATIC_RUNTIME` | ON* | Build with `/MT` (static runtime) |
 | `VDEPS_DYNAMIC_RUNTIME` | OFF | Build with `/MD` (dynamic runtime) |
+| `VDEPS_SANITIZE` | `""` | Sanitizer set forwarded to `vdeps.py --sanitize` (e.g. `thread`, `address`). Empty disables. Generates `vdeps_all_tsan`. |
+| `VDEPS_PARALLEL` | `""` | Cap parallel build workers (forwarded as `--parallel N`). Empty uses all cores. |
 
 *When neither `VDEPS_STATIC_RUNTIME` nor `VDEPS_DYNAMIC_RUNTIME` is set, `VDEPS_STATIC_RUNTIME` defaults to ON.
+
+**Enable sanitizers via the wrapper:**
+
+```cmake
+set(VDEPS_SANITIZE "thread" CACHE STRING "" FORCE)
+add_subdirectory(vdeps)
+add_dependencies(my_app vdeps_all_tsan)
+```
+
+Sanitized outputs land under `lib/` and `tools/` directories tagged with the sanitizer set (e.g. `linux_thread_debug/`). `vdeps.py` exports `TSAN_OPTIONS` (`halt_on_error=0`, `ignore_noninstrumented_modules=1`) into the dep build environment; the consuming project's root CMakeLists is responsible for setting `TSAN_OPTIONS` (and equivalents for ASan/MSan/UBSan) for the final app build/run.
 
 **Build both runtimes for combined packages:**
 
@@ -95,8 +116,10 @@ add_subdirectory(vdeps)
 | `vdeps_all_md` | All deps with dynamic runtime (/MD) |
 | `vdeps_all_llvm_mt` | All deps with LLVM + static runtime |
 | `vdeps_all_llvm_md` | All deps with LLVM + dynamic runtime |
+| `vdeps_all_tsan` | All deps with sanitizers (only when `VDEPS_SANITIZE` is set) |
 | `vdeps_<name>_mt` | Individual dep with static runtime |
 | `vdeps_<name>_md` | Individual dep with dynamic runtime |
+| `vdeps_<name>_<runtime>_tsan` | Individual dep with sanitizers |
 
 This wrapper is build orchestration only in v1. It does not create imported CMake targets, propagate include directories, or add link instructions automatically, so linking remains manual.
 
@@ -182,7 +205,7 @@ root/
     └── win_llvm_md_release/
 ```
 
-The `_md` variants use dynamic MSVC runtime libraries (`/MD`, `/MDd`). The `_llvm_` prefix indicates Clang/LLVM builds.
+The `_md` variants use dynamic MSVC runtime libraries (`/MD`, `/MDd`). The `_llvm_` prefix indicates Clang/LLVM builds. With `--sanitize thread`, output paths use a `_thread` tag (e.g. `linux_thread_debug/`, `win_llvm_thread_release/`); `--sanitize address` produces `_address`, comma-separated sets produce underscore-joined tags like `_thread_address`. The build directory is tagged the same way (`build_thread_debug`, `lib/address_release`, etc.). `--parallel N` does not affect directory names -- it only caps the worker count.
 
 ## Platform-Specific Behaviour
 

@@ -238,14 +238,19 @@ def get_compiler_info(use_llvm):
     return path, (first_line[:256] if first_line else None)
 
 
-def get_toolchain_fingerprint(use_llvm, use_dynamic_runtime):
+def get_toolchain_fingerprint(use_llvm, use_dynamic_runtime, sanitize=None):
     """Build a toolchain identity dict for the current vdeps invocation.
 
     The dict is compared for equality against the ``toolchain`` field of a
     cached state record; any mismatch forces a rebuild. ``compiler_path`` and
     ``compiler_version`` capture which compiler was actually invoked, while
-    ``use_llvm`` / ``use_dynamic_runtime`` mirror the effective toolchain
-    flags for self-contained inspection.
+    ``use_llvm`` / ``use_dynamic_runtime`` / ``sanitize`` mirror the effective
+    toolchain flags for self-contained inspection.
+
+    ``sanitize`` is the value passed via ``--sanitize`` (e.g. ``"thread"``) or
+    ``None`` when no sanitizer is active. Falsy values are normalized to
+    ``None`` so ``--sanitize ""`` and the omitted flag produce identical
+    fingerprints (both disable sanitizers functionally).
     """
     compiler_path, compiler_version = get_compiler_info(use_llvm)
     return {
@@ -253,15 +258,55 @@ def get_toolchain_fingerprint(use_llvm, use_dynamic_runtime):
         "compiler_version": compiler_version,
         "use_llvm": use_llvm,
         "use_dynamic_runtime": use_dynamic_runtime,
+        "sanitize": sanitize or None,
     }
 
 
-def get_platform_cmake_args(cxx_standard=20, use_llvm=False, use_dynamic_runtime=False):
-    """Returns CMake arguments specific to the current operating system."""
+def _normalize_sanitize_tag(sanitize):
+    """Derive a directory-name tag from a ``--sanitize`` value.
+
+    Strips whitespace, drops empty entries, and returns an underscore-joined
+    string suitable for suffixing into ``platform_subdir`` or build-dir
+    names. The full value is still passed verbatim to ``-fsanitize=``.
+    """
+    if not sanitize:
+        return ""
+    parts = [p.strip() for p in sanitize.split(",") if p.strip()]
+    return "_".join(parts)
+
+
+def _validate_parallel(value):
+    """argparse ``type=`` for ``--parallel``: positive integer or it fails."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(
+            f"expected an integer, got {value!r}"
+        )
+    if n < 1:
+        raise argparse.ArgumentTypeError(
+            f"must be >= 1, got {n}"
+        )
+    return n
+
+
+def get_platform_cmake_args(cxx_standard=20, use_llvm=False, use_dynamic_runtime=False, sanitize=None):
+    """Returns CMake arguments specific to the current operating system.
+
+    ``sanitize`` is the value passed to ``-fsanitize=...`` (or ``None`` to
+    skip). When set, ``-fsanitize=<sanitize>`` is appended to all compiler
+    and linker flag variables so the chosen sanitizer is consistently
+    applied to objects, executables, and shared/module libraries. Linker
+    flag variables that are normally absent on a given platform are only
+    emitted when ``sanitize`` is set -- this keeps the existing default
+    build (no sanitizer) byte-identical to today's output.
+    """
     common_args = [
         f"-DCMAKE_CXX_STANDARD={cxx_standard}",
         "-DCMAKE_CXX_STANDARD_REQUIRED=ON",
     ]
+
+    san_flag = f" -fsanitize={sanitize}" if sanitize else ""
 
     if IS_WINDOWS:
         # Windows-specific flags (Common for both MSVC and Clang-cl)
@@ -281,7 +326,7 @@ def get_platform_cmake_args(cxx_standard=20, use_llvm=False, use_dynamic_runtime
             llvm_lib = get_llvm_tool_path("llvm-lib")
             llvm_ranlib = get_llvm_tool_path("llvm-ranlib")
 
-            return (
+            args = (
                 common_args
                 + win_common
                 + [
@@ -293,19 +338,35 @@ def get_platform_cmake_args(cxx_standard=20, use_llvm=False, use_dynamic_runtime
                     f"-DCMAKE_NM={llvm_nm}",
                     f"-DCMAKE_AR={llvm_lib}",
                     f"-DCMAKE_RANLIB={llvm_ranlib}",
-                    "-DCMAKE_C_FLAGS=/W0 -w",
-                    "-DCMAKE_CXX_FLAGS=/W0 /EHsc -w",
+                    f"-DCMAKE_C_FLAGS=/W0 -w{san_flag}",
+                    f"-DCMAKE_CXX_FLAGS=/W0 /EHsc -w{san_flag}",
                 ]
             )
+            # On Windows we only set the linker flags explicitly when a
+            # sanitizer is active -- otherwise we leave CMake's defaults.
+            if san_flag:
+                args += [
+                    f"-DCMAKE_EXE_LINKER_FLAGS={san_flag.strip()}",
+                    f"-DCMAKE_SHARED_LINKER_FLAGS={san_flag.strip()}",
+                    f"-DCMAKE_MODULE_LINKER_FLAGS={san_flag.strip()}",
+                ]
+            return args
 
-        return (
+        args = (
             common_args
             + win_common
             + [
-                "-DCMAKE_C_FLAGS=/W0",
-                "-DCMAKE_CXX_FLAGS=/W0 /EHsc /MP",
+                f"-DCMAKE_C_FLAGS=/W0{san_flag}",
+                f"-DCMAKE_CXX_FLAGS=/W0 /EHsc /MP{san_flag}",
             ]
         )
+        if san_flag:
+            args += [
+                f"-DCMAKE_EXE_LINKER_FLAGS={san_flag.strip()}",
+                f"-DCMAKE_SHARED_LINKER_FLAGS={san_flag.strip()}",
+                f"-DCMAKE_MODULE_LINKER_FLAGS={san_flag.strip()}",
+            ]
+        return args
     else:
         # Unix-like flags (Clang + Ninja + libc++)
         args = common_args + [
@@ -313,17 +374,24 @@ def get_platform_cmake_args(cxx_standard=20, use_llvm=False, use_dynamic_runtime
             "Ninja",
             "-DCMAKE_C_COMPILER=clang",
             "-DCMAKE_CXX_COMPILER=clang++",
-            "-DCMAKE_C_FLAGS=-w",
-            "-DCMAKE_CXX_FLAGS=-w -stdlib=libc++",
+            f"-DCMAKE_C_FLAGS=-w{san_flag}",
+            f"-DCMAKE_CXX_FLAGS=-w -stdlib=libc++{san_flag}",
         ]
 
-        # Linker flags: macOS libc++ includes abi, Linux often needs explicit -lc++abi
+        # Linker flags: macOS libc++ includes abi, Linux often needs explicit -lc++abi.
+        # We emit EXE/SHARED unconditionally (matching pre-feature behavior) and
+        # MODULE only when sanitizing, mirroring the Windows branch -- MODULE
+        # isn't typically set by consumer projects so adding it unconditionally
+        # could change how a dependency's plugin libraries link.
         link_flags = "-stdlib=libc++"
         if not IS_MACOS:
             link_flags += " -lc++abi"
+        link_flags += san_flag
 
         args.append(f"-DCMAKE_EXE_LINKER_FLAGS={link_flags}")
         args.append(f"-DCMAKE_SHARED_LINKER_FLAGS={link_flags}")
+        if san_flag:
+            args.append(f"-DCMAKE_MODULE_LINKER_FLAGS={link_flags}")
 
         return args
 
@@ -424,6 +492,10 @@ def validate_generate_cmake_args(args, parser):
         parser.error("--generate-cmake cannot be used with --llvm")
     if args.auto_skip:
         parser.error("--auto-skip cannot be used with --generate-cmake")
+    if args.sanitize:
+        parser.error("--generate-cmake cannot be used with --sanitize")
+    if args.parallel is not None:
+        parser.error("--generate-cmake cannot be used with --parallel")
 
 
 def validate_cli_args(args, parser):
@@ -463,11 +535,30 @@ def render_generated_cmake(dependencies):
         'option(VDEPS_USE_LLVM "Use Clang/LLVM compiler on Windows" OFF)',
         'option(VDEPS_STATIC_RUNTIME "Build with static MSVC runtime (/MT, /MTd)" OFF)',
         'option(VDEPS_DYNAMIC_RUNTIME "Build with dynamic MSVC runtime (/MD, /MDd)" OFF)',
+        # VDEPS_SANITIZE mirrors the --sanitize CLI flag. Empty (default) = off.
+        # VDEPS_PARALLEL caps the CMake --parallel worker count; empty = all cores.
+        'set(VDEPS_SANITIZE "" CACHE STRING "Sanitizer set passed to vdeps.py --sanitize (e.g. thread,address,memory,undefined). Empty disables.")',
+        'set(VDEPS_PARALLEL "" CACHE STRING "Cap parallel build workers (forwarded as --parallel N). Empty uses all cores.")',
         "",
         "# Default to static if neither runtime is specified",
         "if(NOT VDEPS_STATIC_RUNTIME AND NOT VDEPS_DYNAMIC_RUNTIME)",
         "    set(VDEPS_STATIC_RUNTIME ON)",
         "endif()",
+        "",
+        "# Build a sanitizer suffix tag from VDEPS_SANITIZE so target + dir",
+        # names line up with vdeps.py's _normalize_sanitize_tag.
+        "string(REPLACE \",\" \";\" _VDEPS_SANITIZE_LIST \"${VDEPS_SANITIZE}\")",
+        "set(_VDEPS_SANITIZE_TAG \"\")",
+        "foreach(_part IN LISTS _VDEPS_SANITIZE_LIST)",
+        "    string(STRIP \"${_part}\" _part)",
+        "    if(_part)",
+        "        if(_VDEPS_SANITIZE_TAG)",
+        "            set(_VDEPS_SANITIZE_TAG \"${_VDEPS_SANITIZE_TAG}_${_part}\")",
+        "        else()",
+        "            set(_VDEPS_SANITIZE_TAG \"${_part}\")",
+        "        endif()",
+        "    endif()",
+        "endforeach()",
         "",
         "# Helper macro for building a single dependency",
         "macro(vdeps_build_dep TARGET_NAME DEP_NAME TARGET_SUFFIX EXTRA_ARGS)",
@@ -499,32 +590,71 @@ def render_generated_cmake(dependencies):
         dep_names.append(target_name)
         escaped_names.append(escape_cmake_string(dep.name))
 
-    def generate_variant_lines(runtime_flag, llvm_flag, suffix, extra_args, comment):
-        result = []
-        result.append("")
-        result.append(f"# {comment}")
-        result.append(f"if({runtime_flag})")
+    def generate_variant_lines(runtime_flag, llvm_flag, suffix, extra_args, comment, sanitizer_tag=""):
+        """Emit a runtime x llvm variant block.
+
+        ``sanitizer_tag`` is empty for the base (non-sanitized) variants
+        (which keeps target names unchanged from earlier vdeps releases).
+        When non-empty, the targets gain a ``_tsan`` suffix and the
+        invocation gets ``--sanitize $VDEPS_SANITIZE`` appended; both the
+        per-target calls and the aggregate target are wrapped in an
+        ``if(_VDEPS_SANITIZE_TAG)`` guard so they only exist when the user
+        opts in.
+
+        ``--parallel $VDEPS_PARALLEL`` is appended whenever VDEPS_PARALLEL
+        is non-empty, regardless of sanitizer axis.
+        """
+        result = [""]
+
+        # Build the EXTRA_ARGS inline. The sanitizer tag, if set, requires
+        # --sanitize and gates the whole block; VDEPS_PARALLEL is independent.
+        if sanitizer_tag:
+            result.append(f"# {comment} (sanitized)")
+            result.append(f"if(_VDEPS_SANITIZE_TAG)")
+            san_extra = (extra_args + " --sanitize ${VDEPS_SANITIZE}").strip()
+            result.append("    if(VDEPS_PARALLEL)")
+            result.append(f"        set(_VDEPS_EXTRA_ARGV \"{san_extra} --parallel ${{VDEPS_PARALLEL}}\")")
+            result.append("    else()")
+            result.append(f"        set(_VDEPS_EXTRA_ARGV \"{san_extra}\")")
+            result.append("    endif()")
+            indent_outer = "    "
+        else:
+            result.append(f"# {comment}")
+            result.append("if(VDEPS_PARALLEL)")
+            result.append(f"    set(_VDEPS_EXTRA_ARGV \"{extra_args} --parallel ${{VDEPS_PARALLEL}}\")")
+            result.append("else()")
+            result.append(f"    set(_VDEPS_EXTRA_ARGV \"{extra_args}\")")
+            result.append("endif()")
+            indent_outer = ""
+
+        result.append(f"{indent_outer}if({runtime_flag})")
+
+        # Effective target suffix: sanitizer tag gets appended when active.
+        eff_suffix = f"{suffix}_{sanitizer_tag}" if sanitizer_tag else suffix
+
         if llvm_flag:
-            result.append("    if(VDEPS_USE_LLVM)")
+            result.append(f"{indent_outer}    if(VDEPS_USE_LLVM)")
             for target_name, dep_name in zip(dep_names, escaped_names):
                 result.append(
-                    f'        vdeps_build_dep({target_name} {dep_name} {suffix} "{extra_args}")'
+                    f'{indent_outer}        vdeps_build_dep({target_name} {dep_name} {eff_suffix} "${{_VDEPS_EXTRA_ARGV}}")'
                 )
-            result.append(f"        add_custom_target(vdeps_all_{suffix})")
+            result.append(f"{indent_outer}        add_custom_target(vdeps_all_{eff_suffix})")
             result.append(
-                f"        add_dependencies(vdeps_all_{suffix} {' '.join(f'{n}_{suffix}' for n in dep_names)})"
+                f"{indent_outer}        add_dependencies(vdeps_all_{eff_suffix} {' '.join(f'{n}_{eff_suffix}' for n in dep_names)})"
             )
-            result.append("    endif()")
+            result.append(f"{indent_outer}    endif()")
         else:
             for target_name, dep_name in zip(dep_names, escaped_names):
                 result.append(
-                    f'    vdeps_build_dep({target_name} {dep_name} {suffix} "{extra_args}")'
+                    f'{indent_outer}    vdeps_build_dep({target_name} {dep_name} {eff_suffix} "${{_VDEPS_EXTRA_ARGV}}")'
                 )
-            result.append(f"    add_custom_target(vdeps_all_{suffix})")
+            result.append(f"{indent_outer}    add_custom_target(vdeps_all_{eff_suffix})")
             result.append(
-                f"    add_dependencies(vdeps_all_{suffix} {' '.join(f'{n}_{suffix}' for n in dep_names)})"
+                f"{indent_outer}    add_dependencies(vdeps_all_{eff_suffix} {' '.join(f'{n}_{eff_suffix}' for n in dep_names)})"
             )
-        result.append("endif()")
+        result.append(f"{indent_outer}endif()")
+        if sanitizer_tag:
+            result.append("endif()")  # close _VDEPS_SANITIZE_TAG
         return result
 
     lines.extend(
@@ -560,6 +690,27 @@ def render_generated_cmake(dependencies):
         )
     )
 
+    # Sanitized variants: same 4 combos, gated by VDEPS_SANITIZE / _VDEPS_SANITIZE_TAG,
+    # targets suffixed with _tsan. Targets: vdeps_<dep>_<runtime>_<llvm>_tsan and
+    # vdeps_all_<runtime>_<llvm>_tsan.
+    for variant in (
+        ("VDEPS_STATIC_RUNTIME", False, "mt", ""),
+        ("VDEPS_STATIC_RUNTIME", True, "llvm_mt", "--llvm"),
+        ("VDEPS_DYNAMIC_RUNTIME", False, "md", "--md"),
+        ("VDEPS_DYNAMIC_RUNTIME", True, "llvm_md", "--llvm --md"),
+    ):
+        runtime_flag, llvm_flag, suffix, extra_args = variant
+        lines.extend(
+            generate_variant_lines(
+                runtime_flag,
+                llvm_flag,
+                suffix,
+                extra_args,
+                f"{suffix} variant with sanitizers",
+                sanitizer_tag="tsan",
+            )
+        )
+
     lines.extend(["", "# Top-level aggregate target", "add_custom_target(vdeps_all)"])
     lines.append("if(VDEPS_STATIC_RUNTIME)")
     lines.append("    if(VDEPS_USE_LLVM)")
@@ -574,6 +725,29 @@ def render_generated_cmake(dependencies):
     lines.append("    else()")
     lines.append("        add_dependencies(vdeps_all vdeps_all_md)")
     lines.append("    endif()")
+    lines.append("endif()")
+
+    # Sanitized aggregate target: vdeps_all_tsan fans in the four sanitized
+    # sub-aggregates and is itself added to vdeps_all when sanitizers are on.
+    # Each sub-aggregate only exists when its runtime+llvm combo is enabled
+    # (mirrors the gating on the non-sanitized vdeps_all fan-in above).
+    lines.append("if(_VDEPS_SANITIZE_TAG)")
+    lines.append("    add_custom_target(vdeps_all_tsan)")
+    lines.append("    if(VDEPS_STATIC_RUNTIME)")
+    lines.append("        if(VDEPS_USE_LLVM)")
+    lines.append("            add_dependencies(vdeps_all_tsan vdeps_all_llvm_mt_tsan)")
+    lines.append("        else()")
+    lines.append("            add_dependencies(vdeps_all_tsan vdeps_all_mt_tsan)")
+    lines.append("        endif()")
+    lines.append("    endif()")
+    lines.append("    if(VDEPS_DYNAMIC_RUNTIME)")
+    lines.append("        if(VDEPS_USE_LLVM)")
+    lines.append("            add_dependencies(vdeps_all_tsan vdeps_all_llvm_md_tsan)")
+    lines.append("        else()")
+    lines.append("            add_dependencies(vdeps_all_tsan vdeps_all_md_tsan)")
+    lines.append("        endif()")
+    lines.append("    endif()")
+    lines.append("    add_dependencies(vdeps_all vdeps_all_tsan)")
     lines.append("endif()")
 
     lines.append("")
@@ -817,9 +991,19 @@ def evaluate_auto_skip(
         return False, "no cached state"
 
     record_toolchain = record.get("toolchain")
-    if not isinstance(record_toolchain, dict) or record_toolchain != (
-        toolchain_fingerprint or {}
-    ):
+    if not isinstance(record_toolchain, dict):
+        return False, "toolchain changed"
+
+    current_toolchain = toolchain_fingerprint or {}
+    # Back-compat: records written before --sanitize support lack a "sanitize"
+    # key. Treat missing as None so old records remain valid against a run
+    # without sanitizers (the natural migration path), but invalidate when
+    # the new run actually enables sanitizers.
+    normalized_record = dict(record_toolchain)
+    normalized_record.setdefault("sanitize", None)
+    normalized_current = dict(current_toolchain)
+    normalized_current.setdefault("sanitize", None)
+    if normalized_record != normalized_current:
         return False, "toolchain changed"
 
     if record.get("head") != git_head:
@@ -866,6 +1050,28 @@ def main():
         "--md",
         action="store_true",
         help="Use dynamic MSVC runtime (/MD, /MDd) instead of static (/MT, /MTd) on Windows",
+    )
+    parser.add_argument(
+        "--sanitize",
+        metavar="SET",
+        default=None,
+        help=(
+            "Pass -fsanitize=<SET> to the compiler and linker (e.g. 'thread', "
+            "'address', 'memory', 'undefined', or comma-separated). Empty/"
+            "omitted disables sanitizers. Auto-skip invalidates when this "
+            "changes. Primarily useful on Linux/macOS; on Windows prefer "
+            "--llvm for clang's sanitizer runtime."
+        ),
+    )
+    parser.add_argument(
+        "--parallel",
+        type=_validate_parallel,
+        default=None,
+        metavar="N",
+        help=(
+            "Cap parallel build workers via CMake's --parallel N (e.g. on "
+            "RAM-constrained systems). Omit for all cores."
+        ),
     )
     parser.add_argument(
         "--clean",
@@ -931,11 +1137,36 @@ def main():
                     dep_dir = os.path.join(deps_root_dir, dep_data.get("rel_path", ""))
                     if os.path.exists(dep_dir):
                         for config in CONFIGS:
-                            for prefix in ["build", "build_llvm", "build_md", "build_llvm_md"]:
+                            # Build a constrained list of prefixes to delete.
+                            # We don't glob build_*_debug because that would
+                            # also match user-created dirs inside a third-party
+                            # dep tree (e.g. build_experimental_debug). Instead
+                            # we enumerate the known prefixes vdeps itself
+                            # creates: bare, Windows llvm/md variants, and
+                            # Windows- or sanitizer-derived suffixes.
+                            known_prefixes = ["build", "build_llvm", "build_md", "build_llvm_md"]
+                            if IS_WINDOWS:
+                                extra = []
+                                for s in ("thread", "address", "memory", "undefined", "tsan", "asan", "msan", "ubsan", "lsan"):
+                                    for base in ("build", "build_llvm", "build_md", "build_llvm_md"):
+                                        extra.append(f"{base}_{s}")
+                                known_prefixes += extra
+                            else:
+                                # On non-Windows, sanitize dir names look like
+                                # build_<tag>_<config>. Probe a representative
+                                # set; if the user passes an unusual value
+                                # they can add it via vdeps.toml or delete the
+                                # dir manually.
+                                known_prefixes += [
+                                    "build_thread", "build_address", "build_memory",
+                                    "build_undefined", "build_tsan", "build_asan",
+                                    "build_msan", "build_ubsan", "build_lsan",
+                                ]
+                            for prefix in known_prefixes:
                                 build_dir = os.path.join(
                                     dep_dir, f"{prefix}_{config['name']}"
                                 )
-                                if os.path.exists(build_dir):
+                                if os.path.isdir(build_dir):
                                     print(f"Removing {build_dir}")
                                     shutil.rmtree(build_dir)
 
@@ -967,18 +1198,29 @@ def main():
         ACTIVE_PLATFORM_TAGS = {PLATFORM_TAG}
 
     platform_subdir = PLATFORM_TAG
+    sanitize_tag = _normalize_sanitize_tag(args.sanitize)
     if IS_WINDOWS:
         suffixes = []
         if args.llvm:
             suffixes.append("llvm")
         if args.md:
             suffixes.append("md")
+        if sanitize_tag:
+            suffixes.append(sanitize_tag)
         if suffixes:
             platform_subdir = "win_" + "_".join(suffixes)
+    else:
+        if sanitize_tag:
+            platform_subdir = f"{PLATFORM_TAG}_{sanitize_tag}"
 
     state_data = load_state_data(root_dir)
 
-    toolchain_fingerprint = get_toolchain_fingerprint(args.llvm, args.md)
+    # Coerce empty-string sanitize to None so toggling between "" (explicit) and
+    # omitted doesn't invalidate --auto-skip. Functionally identical: both skip
+    # the sanitizer block in get_platform_cmake_args and in the build env.
+    sanitize_for_fingerprint = args.sanitize or None
+
+    toolchain_fingerprint = get_toolchain_fingerprint(args.llvm, args.md, sanitize_for_fingerprint)
 
     if args.dependencies:
         # Validate dependency names: trim whitespace and filter valid names
@@ -1064,6 +1306,8 @@ def main():
                         build_dir_name += "_llvm"
                     if IS_WINDOWS and args.md:
                         build_dir_name += "_md"
+                    if sanitize_tag:
+                        build_dir_name += f"_{sanitize_tag}"
                     build_dir_name += f"_{config['name']}"
                     build_dir = os.path.join(root_dir, temp_dir.strip(), build_dir_name)
                     # Ensure temp_dir parent directory exists
@@ -1074,6 +1318,8 @@ def main():
                         prefix += "_llvm"
                     if IS_WINDOWS and args.md:
                         prefix += "_md"
+                    if sanitize_tag:
+                        prefix += f"_{sanitize_tag}"
                     build_dir = os.path.join(dep_dir, f"{prefix}_{config['name']}")
 
                 output_lib_dir = os.path.join(
@@ -1120,6 +1366,16 @@ def main():
 
                 # Environment Setup
                 build_env = env.copy()
+                # When sanitizing, forward the sanitizer runtime's env vars
+                # so dep-built test binaries (e.g. SPIRV-Tools tools) honor
+                # the same suppressions as the consuming app.
+                if args.sanitize:
+                    sanitizers = {s.strip() for s in args.sanitize.split(",") if s.strip()}
+                    if "thread" in sanitizers and "TSAN_OPTIONS" not in build_env:
+                        build_env["TSAN_OPTIONS"] = (
+                            "halt_on_error=0 "
+                            "ignore_noninstrumented_modules=1"
+                        )
 
                 if dep.build:
                     # Interpolate variables in cmake_options for this config
@@ -1138,6 +1394,7 @@ def main():
                             cxx_standard=dep.cxx_standard,
                             use_llvm=args.llvm,
                             use_dynamic_runtime=args.md,
+                            sanitize=args.sanitize,
                         )
                         + [f"-DCMAKE_BUILD_TYPE={build_type}"]
                         + final_cmake_options
@@ -1191,6 +1448,10 @@ def main():
 
                     # Multi-Config generators (like VS) require --config
                     build_cmd = ["cmake", "--build", build_dir, "--parallel"]
+                    if args.parallel is not None:
+                        # Cap CMake's parallel worker count; honors both Ninja
+                        # and MSBuild. Default (None) keeps bare --parallel.
+                        build_cmd.append(str(args.parallel))
                     if IS_WINDOWS:
                         build_cmd.extend(["--config", build_type])
 

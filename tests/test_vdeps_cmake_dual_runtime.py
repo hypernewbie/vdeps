@@ -41,7 +41,7 @@ cmake_options = []
         )
         content = get_cmake_content(tmp_path)
         assert "add_custom_target(vdeps_all_mt)" in content
-        assert 'vdeps_build_dep(vdeps_nvrhi nvrhi mt "")' in content
+        assert 'vdeps_build_dep(vdeps_nvrhi nvrhi mt "${_VDEPS_EXTRA_ARGV}")' in content
         assert "add_dependencies(vdeps_all vdeps_all_mt)" in content
 
     def test_default_generates_vdeps_all_md_conditional(self, tmp_path):
@@ -72,7 +72,7 @@ cmake_options = []
         )
         content = get_cmake_content(tmp_path)
         assert "add_custom_target(vdeps_all_mt)" in content
-        assert 'vdeps_build_dep(vdeps_nvrhi nvrhi mt "")' in content
+        assert 'vdeps_build_dep(vdeps_nvrhi nvrhi mt "${_VDEPS_EXTRA_ARGV}")' in content
 
 
 class TestDynamicOnly:
@@ -88,7 +88,7 @@ cmake_options = []
         )
         content = get_cmake_content(tmp_path)
         assert "add_custom_target(vdeps_all_md)" in content
-        assert 'vdeps_build_dep(vdeps_nvrhi nvrhi md "--md")' in content
+        assert 'vdeps_build_dep(vdeps_nvrhi nvrhi md "${_VDEPS_EXTRA_ARGV}")' in content
 
 
 class TestBothRuntimes:
@@ -105,8 +105,8 @@ cmake_options = []
         content = get_cmake_content(tmp_path)
         assert "add_custom_target(vdeps_all_mt)" in content
         assert "add_custom_target(vdeps_all_md)" in content
-        assert 'vdeps_build_dep(vdeps_nvrhi nvrhi mt "")' in content
-        assert 'vdeps_build_dep(vdeps_nvrhi nvrhi md "--md")' in content
+        assert 'vdeps_build_dep(vdeps_nvrhi nvrhi mt "${_VDEPS_EXTRA_ARGV}")' in content
+        assert 'vdeps_build_dep(vdeps_nvrhi nvrhi md "${_VDEPS_EXTRA_ARGV}")' in content
 
     def test_vdeps_all_depends_on_both_variants(self, tmp_path):
         write_config(
@@ -143,7 +143,7 @@ cmake_options = []
         content = get_cmake_content(tmp_path)
         assert "if(VDEPS_USE_LLVM)" in content
         assert "add_custom_target(vdeps_all_llvm_mt)" in content
-        assert 'vdeps_build_dep(vdeps_nvrhi nvrhi llvm_mt "--llvm")' in content
+        assert 'vdeps_build_dep(vdeps_nvrhi nvrhi llvm_mt "${_VDEPS_EXTRA_ARGV}")' in content
 
     def test_llvm_and_dynamic_generates_llvm_md_targets(self, tmp_path):
         write_config(
@@ -157,7 +157,7 @@ cmake_options = []
         )
         content = get_cmake_content(tmp_path)
         assert "add_custom_target(vdeps_all_llvm_md)" in content
-        assert 'vdeps_build_dep(vdeps_nvrhi nvrhi llvm_md "--llvm --md")' in content
+        assert 'vdeps_build_dep(vdeps_nvrhi nvrhi llvm_md "${_VDEPS_EXTRA_ARGV}")' in content
 
     def test_llvm_with_both_runtimes_generates_all_llvm_variants(self, tmp_path):
         write_config(
@@ -172,8 +172,8 @@ cmake_options = []
         content = get_cmake_content(tmp_path)
         assert "add_custom_target(vdeps_all_llvm_mt)" in content
         assert "add_custom_target(vdeps_all_llvm_md)" in content
-        assert 'vdeps_build_dep(vdeps_nvrhi nvrhi llvm_mt "--llvm")' in content
-        assert 'vdeps_build_dep(vdeps_nvrhi nvrhi llvm_md "--llvm --md")' in content
+        assert 'vdeps_build_dep(vdeps_nvrhi nvrhi llvm_mt "${_VDEPS_EXTRA_ARGV}")' in content
+        assert 'vdeps_build_dep(vdeps_nvrhi nvrhi llvm_md "${_VDEPS_EXTRA_ARGV}")' in content
 
 
 class TestMultipleDependencies:
@@ -451,18 +451,26 @@ cmake_options = []
         import re
 
         vdeps_build_dep_pattern = (
-            r'vdeps_build_dep\s*\(\s*(\S+)\s+(\S+)\s+(\S+)\s+"([^"]*)"\)'
+            r'vdeps_build_dep\s*\(\s*(\S+)\s+(\S+)\s+(\S+)\s+'
+            r'(?:"\$\{_VDEPS_EXTRA_ARGV\}"|"([^"]*)")\)'
         )
         matches = re.findall(vdeps_build_dep_pattern, content)
+        # After alternation, captured groups become the tuple of all groups
+        # in order. The literal-extra-args branch keeps group 4 as
+        # ([^"]*); the indirection branch has group 4 empty.
+        clean = [(t, d, s, e or '${_VDEPS_EXTRA_ARGV}') for t, d, s, e in matches]
 
+        # The 4th value (extra args) varies between the literal-pattern
+        # branches and the indirection branches, so we only assert on
+        # (target, dep, suffix) here.
         expected_variants = {
-            ("vdeps_test_dep", "test-dep", "mt", ""),
-            ("vdeps_test_dep", "test-dep", "llvm_mt", "--llvm"),
-            ("vdeps_test_dep", "test-dep", "md", "--md"),
-            ("vdeps_test_dep", "test-dep", "llvm_md", "--llvm --md"),
+            ("vdeps_test_dep", "test-dep", "mt"),
+            ("vdeps_test_dep", "test-dep", "llvm_mt"),
+            ("vdeps_test_dep", "test-dep", "md"),
+            ("vdeps_test_dep", "test-dep", "llvm_md"),
         }
 
-        actual_variants = set(matches)
+        actual_variants = set((t, d, s) for t, d, s, _ in clean)
 
         for expected in expected_variants:
             assert expected in actual_variants, (

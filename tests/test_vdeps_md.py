@@ -554,9 +554,9 @@ def test_generate_cmake_includes_runtime_options(tmp_path):
     assert "if(NOT VDEPS_STATIC_RUNTIME AND NOT VDEPS_DYNAMIC_RUNTIME)" in content
     assert "macro(vdeps_build_dep" in content
     assert "add_custom_target(vdeps_all_mt" in content
-    assert 'vdeps_build_dep(vdeps_nvrhi nvrhi mt "")' in content
+    assert 'vdeps_build_dep(vdeps_nvrhi nvrhi mt "${_VDEPS_EXTRA_ARGV}")' in content
     assert "add_custom_target(vdeps_all_md" in content
-    assert 'vdeps_build_dep(vdeps_nvrhi nvrhi md "--md")' in content
+    assert 'vdeps_build_dep(vdeps_nvrhi nvrhi md "${_VDEPS_EXTRA_ARGV}")' in content
 
 
 def test_md_llvm_build_directory_name(tmp_path):
@@ -686,11 +686,12 @@ def test_md_flag_passed_to_cmake_args(tmp_path):
     original_func = vdeps.get_platform_cmake_args
 
     def mock_platform_cmake_args(
-        cxx_standard=20, use_llvm=False, use_dynamic_runtime=False
+        cxx_standard=20, use_llvm=False, use_dynamic_runtime=False, sanitize=None
     ):
         captured_args["cxx_standard"] = cxx_standard
         captured_args["use_llvm"] = use_llvm
         captured_args["use_dynamic_runtime"] = use_dynamic_runtime
+        captured_args["sanitize"] = sanitize
         return [
             f"-DCMAKE_CXX_STANDARD={cxx_standard}",
             "-DCMAKE_CXX_STANDARD_REQUIRED=ON",
@@ -760,7 +761,7 @@ def test_platform_subdir_variations(tmp_path, argv, expected_platform_subdir):
     captured_platform = {}
 
     def mock_platform_cmake_args(
-        cxx_standard=20, use_llvm=False, use_dynamic_runtime=False
+        cxx_standard=20, use_llvm=False, use_dynamic_runtime=False, sanitize=None
     ):
         return [
             f"-DCMAKE_CXX_STANDARD={cxx_standard}",
