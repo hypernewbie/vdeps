@@ -16,11 +16,9 @@ import vdeps
 def run_cmake_configure(source_dir, build_dir, cmake_args):
     """Run CMake configure and return CMakeCache.txt content.
 
-    ``build_dir`` must be unique per test (e.g. derived from the ``tmp_path``
-    fixture) -- reusing one shared directory across tests that pick different
-    generators/compilers (MSVC's default generator vs. clang-cl's explicit
-    ``Ninja``) makes CMake refuse to reconfigure ("Does not match the
-    generator used previously"), which silently skips every later test.
+    ``build_dir`` must be unique per test (e.g. ``tmp_path``) -- reusing one
+    shared dir across different generators/compilers makes CMake refuse to
+    reconfigure, silently skipping every later test.
     """
     os.makedirs(build_dir, exist_ok=True)
 
@@ -132,12 +130,7 @@ class TestCmakeMsvcRuntimeLibrary:
         assert build_result.returncode == 0, f"Build failed: {build_result.stderr}"
 
     def test_debug_build_with_clang_cl_and_sanitize_succeeds(self, tmp_path):
-        """Real clang-cl build proves the Debug+ASan CRT fix: clang-cl hard-errors
-        at compile time ('-MTd not allowed with -fsanitize=address') if the Debug
-        config still picks a debug CRT. A successful build is direct evidence the
-        fix works, independent of what CMakeCache.txt reports for the unevaluated
-        generator-expression string.
-        """
+        """A real build fails at compile time if Debug still picks a debug CRT."""
         if not sys.platform == "win32":
             pytest.skip("Windows only test")
 

@@ -178,12 +178,7 @@ def test_get_platform_cmake_args_comma_separated_sanitize():
 
 
 # --- Windows sanitize forces non-debug static CRT ---
-#
-# clang-cl's ASan refuses to link against debug CRTs (/MTd, /MDd). Debug and
-# Release configs share one CMAKE_MSVC_RUNTIME_LIBRARY value via a generator
-# expression, so once a sanitizer is active the Debug config must drop the
-# debug CRT too -- otherwise the exact clang-cl error this feature exists to
-# avoid still reproduces for Debug builds.
+# clang-cl's ASan refuses to link against debug CRTs (/MTd, /MDd).
 
 
 def test_get_platform_cmake_args_win_sanitize_forces_plain_multithreaded():
@@ -226,20 +221,71 @@ def test_get_platform_cmake_args_win_no_sanitize_keeps_debug_conditional():
     )
 
 
+# --- Windows ASan runtime linker args (direct unit tests, mocked) ---
+
+
+@pytest.fixture(autouse=True)
+def _clear_clang_resource_dir_cache():
+    vdeps._CLANG_RESOURCE_DIR_CACHE.clear()
+    yield
+    vdeps._CLANG_RESOURCE_DIR_CACHE.clear()
+
+
+def test_get_clang_resource_dir_queries_and_caches(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="C:\\LLVM\\lib\\clang\\21\n")
+
+    monkeypatch.setattr(vdeps.subprocess, "run", fake_run)
+    assert vdeps.get_clang_resource_dir("C:/LLVM/bin/clang-cl.exe") == "C:/LLVM/lib/clang/21"
+    assert vdeps.get_clang_resource_dir("C:/LLVM/bin/clang-cl.exe") == "C:/LLVM/lib/clang/21"
+    assert len(calls) == 1  # second call hit the cache, no second subprocess
+
+
+def test_get_clang_resource_dir_missing_compiler_returns_none(monkeypatch):
+    def fake_run(cmd, **kwargs):
+        raise FileNotFoundError(cmd[0])
+
+    monkeypatch.setattr(vdeps.subprocess, "run", fake_run)
+    assert vdeps.get_clang_resource_dir("C:/nope/clang-cl.exe") is None
+
+
+def test_get_clang_resource_dir_nonzero_returncode_returns_none(monkeypatch):
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 1, stdout="")
+
+    monkeypatch.setattr(vdeps.subprocess, "run", fake_run)
+    assert vdeps.get_clang_resource_dir("C:/LLVM/bin/clang-cl.exe") is None
+
+
+def test_windows_llvm_sanitizer_link_args_skips_without_address():
+    assert vdeps.get_windows_llvm_sanitizer_link_args("C:/LLVM/bin/clang-cl.exe", "thread") == []
+
+
+def test_windows_llvm_sanitizer_link_args_empty_when_runtime_libs_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(vdeps, "get_clang_resource_dir", lambda path: str(tmp_path))
+    assert vdeps.get_windows_llvm_sanitizer_link_args("C:/LLVM/bin/clang-cl.exe", "address") == []
+
+
+def test_windows_llvm_sanitizer_link_args_returns_libpath_and_libs(tmp_path, monkeypatch):
+    lib_dir = tmp_path / "lib" / "windows"
+    lib_dir.mkdir(parents=True)
+    (lib_dir / "clang_rt.asan_static_runtime_thunk-x86_64.lib").touch()
+    (lib_dir / "clang_rt.asan_dynamic-x86_64.lib").touch()
+    monkeypatch.setattr(vdeps, "get_clang_resource_dir", lambda path: str(tmp_path))
+
+    result = vdeps.get_windows_llvm_sanitizer_link_args("C:/LLVM/bin/clang-cl.exe", "address")
+
+    assert any(a.startswith("/libpath:") for a in result)
+    assert "/wholearchive:clang_rt.asan_static_runtime_thunk-x86_64.lib" in result
+    assert "clang_rt.asan_dynamic-x86_64.lib" in result
+
+
 # --- CMAKE_PROJECT_INCLUDE forces the runtime library past vendored overrides ---
-#
-# Vendored dependency CMakeLists.txt files sometimes re-set(CMAKE_MSVC_RUNTIME_LIBRARY
-# ...) themselves (observed in the wild: vrhi's CMakeLists.txt reacting to its own
-# static/dynamic-runtime option). A plain set() in that subdirectory shadows the -D
-# cache value vdeps.py passes, for that scope and everything created in it -- so on
-# Windows+llvm+sanitize, the actual compile line silently reverts to -MTd, reproducing
-# the exact clang-cl "not allowed with -fsanitize=address" error the CRT fix exists to
-# avoid. -D/CACHE alone cannot prevent a downstream set() from shadowing it; only
-# forcing the target property after the fact (via a deferred call once every target
-# exists) survives it -- verified with a real vrhi-shaped repro project, not just
-# reasoning about it: CMAKE_CXX_FLAGS_DEBUG=/MT does NOT work, because CMake appends
-# the MSVC_RUNTIME_LIBRARY-derived flag *after* CMAKE_CXX_FLAGS_DEBUG on the compile
-# line, so the shadowed -MTd still wins.
+# A vendored dep (e.g. vrhi) can re-set(CMAKE_MSVC_RUNTIME_LIBRARY ...) itself
+# and shadow the -D cache value; only overriding it back afterward survives.
 
 
 def test_get_platform_cmake_args_win_llvm_sanitize_sets_project_include():
@@ -273,10 +319,7 @@ def test_write_force_runtime_project_include_content(tmp_path):
 
 
 def test_force_runtime_project_include_survives_vendored_override(tmp_path):
-    """Real (unmocked) CMake configure + build proving the deferred force
-    survives a vrhi-shaped vendored CMakeLists.txt that re-sets
-    CMAKE_MSVC_RUNTIME_LIBRARY itself after vdeps.py's -D cache value is set.
-    """
+    """Real (unmocked) build against a vrhi-shaped vendored CMakeLists.txt override."""
     if not sys.platform == "win32":
         pytest.skip("Windows only test")
 
@@ -290,8 +333,7 @@ def test_force_runtime_project_include_survives_vendored_override(tmp_path):
         "add_subdirectory(inner)\n",
         encoding="utf-8",
     )
-    # Mirrors the real vrhi CMakeLists.txt pattern: a plain set() (no CACHE)
-    # that shadows whatever the top-level -D passed, right before add_library.
+    # Mirrors vrhi's CMakeLists.txt: a plain set() shadowing the top-level -D.
     (inner / "CMakeLists.txt").write_text(
         "if(MSVC)\n"
         "    if(VDEPS_DYNAMIC_RUNTIME)\n"
