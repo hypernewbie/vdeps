@@ -307,6 +307,32 @@ def test_get_platform_cmake_args_win_no_sanitize_has_no_project_include():
     assert not any(a.startswith("-DCMAKE_PROJECT_INCLUDE=") for a in args)
 
 
+def test_get_platform_cmake_args_win_llvm_sanitize_skips_compiler_works_probe():
+    with (
+        patch("vdeps.IS_WINDOWS", True),
+        patch(
+            "vdeps.resolve_executable_path",
+            side_effect=lambda x: f"C:/LLVM/bin/{x}",
+        ),
+    ):
+        args = vdeps.get_platform_cmake_args(use_llvm=True, sanitize="address")
+    assert "-DCMAKE_C_COMPILER_WORKS=1" in args
+    assert "-DCMAKE_CXX_COMPILER_WORKS=1" in args
+    assert "-DCMAKE_SIZEOF_VOID_P=8" in args
+
+
+def test_get_platform_cmake_args_win_no_sanitize_keeps_compiler_works_probe():
+    with (
+        patch("vdeps.IS_WINDOWS", True),
+        patch(
+            "vdeps.resolve_executable_path",
+            side_effect=lambda x: f"C:/LLVM/bin/{x}",
+        ),
+    ):
+        args = vdeps.get_platform_cmake_args(use_llvm=True)
+    assert not any("COMPILER_WORKS" in a or "SIZEOF_VOID_P" in a for a in args)
+
+
 def test_write_force_runtime_project_include_content(tmp_path):
     script_path = vdeps.write_force_runtime_project_include("MultiThreaded")
     assert os.path.exists(script_path)
@@ -348,9 +374,10 @@ def test_force_runtime_project_include_survives_vendored_override(tmp_path):
     (inner / "innerlib.cpp").write_text("int inner_func() { return 1; }\n", encoding="utf-8")
 
     build_dir = str(tmp_path / "build")
-    cmake_args = vdeps.get_platform_cmake_args(
-        cxx_standard=20, use_llvm=True, sanitize="address"
-    )
+    with patch("vdeps.IS_WINDOWS", True):
+        cmake_args = vdeps.get_platform_cmake_args(
+            cxx_standard=20, use_llvm=True, sanitize="address"
+        )
     cmake_args.append("-DCMAKE_BUILD_TYPE=Debug")
 
     cmd = ["cmake", "-S", str(outer), "-B", build_dir] + cmake_args
@@ -368,6 +395,54 @@ def test_force_runtime_project_include_survives_vendored_override(tmp_path):
         "vendored CMakeLists.txt's own set(CMAKE_MSVC_RUNTIME_LIBRARY ...) shadowed "
         "vdeps.py's cache value -- the deferred force didn't survive it"
     )
+
+    build_result = subprocess.run(
+        ["cmake", "--build", build_dir], capture_output=True, text=True
+    )
+    assert build_result.returncode == 0, (
+        f"Build failed: {build_result.stdout}\n{build_result.stderr}"
+    )
+
+
+def test_force_runtime_survives_pre_project_override(tmp_path):
+    """Real build against a luau-shaped dep: CRT is set before its own project()."""
+    if not sys.platform == "win32":
+        pytest.skip("Windows only test")
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.10)\n"
+        'option(LUAU_STATIC_CRT "" OFF)\n'
+        "cmake_policy(SET CMP0091 NEW)\n"
+        "if(LUAU_STATIC_CRT)\n"
+        "    cmake_minimum_required(VERSION 3.15)\n"
+        '    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")\n'
+        "endif()\n"
+        "project(luaurepro LANGUAGES CXX)\n"
+        "add_library(luaurepro STATIC lib.cpp)\n",
+        encoding="utf-8",
+    )
+    (proj / "lib.cpp").write_text("int luau_func() { return 1; }\n", encoding="utf-8")
+
+    build_dir = str(tmp_path / "build")
+    with patch("vdeps.IS_WINDOWS", True):
+        cmake_args = vdeps.get_platform_cmake_args(
+            cxx_standard=20, use_llvm=True, sanitize="address"
+        )
+    cmake_args += ["-DLUAU_STATIC_CRT=ON", "-DCMAKE_BUILD_TYPE=Debug"]
+
+    cmd = ["cmake", "-S", str(proj), "-B", build_dir] + cmake_args
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    assert result.returncode == 0, (
+        f"Configure failed (compiler-works probe not skipped): {result.stdout}\n{result.stderr}"
+    )
+
+    ninja_file = os.path.join(build_dir, "build.ninja")
+    with open(ninja_file, encoding="utf-8") as f:
+        ninja_content = f.read()
+    assert " -MT " in ninja_content or ninja_content.rstrip().endswith("-MT")
+    assert " -MTd" not in ninja_content
 
     build_result = subprocess.run(
         ["cmake", "--build", build_dir], capture_output=True, text=True

@@ -474,6 +474,14 @@ def get_platform_cmake_args(cxx_standard=20, use_llvm=False, use_dynamic_runtime
                     msvc_runtime_library
                 )
                 args.append(f"-DCMAKE_PROJECT_INCLUDE={project_include}")
+                # A dep can set CMAKE_MSVC_RUNTIME_LIBRARY before its own
+                # project(), too early for CMAKE_PROJECT_INCLUDE to catch;
+                # skip CMake's compiler-works probe and pre-seed its ABI result.
+                args += [
+                    "-DCMAKE_C_COMPILER_WORKS=1",
+                    "-DCMAKE_CXX_COMPILER_WORKS=1",
+                    "-DCMAKE_SIZEOF_VOID_P=8",
+                ]
             return args
 
         args = (
