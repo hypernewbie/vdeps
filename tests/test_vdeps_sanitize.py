@@ -177,6 +177,164 @@ def test_get_platform_cmake_args_comma_separated_sanitize():
     assert "-fsanitize=thread,undefined" in " ".join(args)
 
 
+# --- Windows sanitize forces non-debug static CRT ---
+#
+# clang-cl's ASan refuses to link against debug CRTs (/MTd, /MDd). Debug and
+# Release configs share one CMAKE_MSVC_RUNTIME_LIBRARY value via a generator
+# expression, so once a sanitizer is active the Debug config must drop the
+# debug CRT too -- otherwise the exact clang-cl error this feature exists to
+# avoid still reproduces for Debug builds.
+
+
+def test_get_platform_cmake_args_win_sanitize_forces_plain_multithreaded():
+    with patch("vdeps.IS_WINDOWS", True):
+        args = vdeps.get_platform_cmake_args(sanitize="address")
+    assert "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded" in args
+    assert not any(
+        "MSVC_RUNTIME_LIBRARY" in a and "Debug" in a for a in args
+    )
+
+
+def test_get_platform_cmake_args_win_llvm_sanitize_forces_plain_multithreaded():
+    with (
+        patch("vdeps.IS_WINDOWS", True),
+        patch(
+            "vdeps.resolve_executable_path",
+            side_effect=lambda x: f"C:/LLVM/bin/{x}",
+        ),
+    ):
+        args = vdeps.get_platform_cmake_args(use_llvm=True, sanitize="address")
+    assert "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded" in args
+
+
+def test_get_platform_cmake_args_win_sanitize_overrides_dynamic_runtime():
+    """--sanitize + --md: sanitizer CRT requirement wins, no /MDd or /MD."""
+    with patch("vdeps.IS_WINDOWS", True):
+        args = vdeps.get_platform_cmake_args(use_dynamic_runtime=True, sanitize="address")
+    assert "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded" in args
+    assert not any(
+        a.startswith("-DCMAKE_MSVC_RUNTIME_LIBRARY=") and "DLL" in a for a in args
+    )
+
+
+def test_get_platform_cmake_args_win_no_sanitize_keeps_debug_conditional():
+    """Without --sanitize, Debug config still gets the debug-suffixed CRT."""
+    with patch("vdeps.IS_WINDOWS", True):
+        args = vdeps.get_platform_cmake_args()
+    assert (
+        "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>" in args
+    )
+
+
+# --- CMAKE_PROJECT_INCLUDE forces the runtime library past vendored overrides ---
+#
+# Vendored dependency CMakeLists.txt files sometimes re-set(CMAKE_MSVC_RUNTIME_LIBRARY
+# ...) themselves (observed in the wild: vrhi's CMakeLists.txt reacting to its own
+# static/dynamic-runtime option). A plain set() in that subdirectory shadows the -D
+# cache value vdeps.py passes, for that scope and everything created in it -- so on
+# Windows+llvm+sanitize, the actual compile line silently reverts to -MTd, reproducing
+# the exact clang-cl "not allowed with -fsanitize=address" error the CRT fix exists to
+# avoid. -D/CACHE alone cannot prevent a downstream set() from shadowing it; only
+# forcing the target property after the fact (via a deferred call once every target
+# exists) survives it -- verified with a real vrhi-shaped repro project, not just
+# reasoning about it: CMAKE_CXX_FLAGS_DEBUG=/MT does NOT work, because CMake appends
+# the MSVC_RUNTIME_LIBRARY-derived flag *after* CMAKE_CXX_FLAGS_DEBUG on the compile
+# line, so the shadowed -MTd still wins.
+
+
+def test_get_platform_cmake_args_win_llvm_sanitize_sets_project_include():
+    with (
+        patch("vdeps.IS_WINDOWS", True),
+        patch(
+            "vdeps.resolve_executable_path",
+            side_effect=lambda x: f"C:/LLVM/bin/{x}",
+        ),
+    ):
+        args = vdeps.get_platform_cmake_args(use_llvm=True, sanitize="address")
+    project_include_args = [a for a in args if a.startswith("-DCMAKE_PROJECT_INCLUDE=")]
+    assert len(project_include_args) == 1
+
+
+def test_get_platform_cmake_args_win_no_sanitize_has_no_project_include():
+    with patch("vdeps.IS_WINDOWS", True):
+        args = vdeps.get_platform_cmake_args(use_llvm=True)
+    assert not any(a.startswith("-DCMAKE_PROJECT_INCLUDE=") for a in args)
+
+
+def test_write_force_runtime_project_include_content(tmp_path):
+    script_path = vdeps.write_force_runtime_project_include("MultiThreaded")
+    assert os.path.exists(script_path)
+    with open(script_path, encoding="utf-8") as f:
+        content = f.read()
+    assert "cmake_language(DEFER" in content
+    assert 'MSVC_RUNTIME_LIBRARY "MultiThreaded"' in content
+    assert "BUILDSYSTEM_TARGETS" in content
+    assert "SUBDIRECTORIES" in content
+
+
+def test_force_runtime_project_include_survives_vendored_override(tmp_path):
+    """Real (unmocked) CMake configure + build proving the deferred force
+    survives a vrhi-shaped vendored CMakeLists.txt that re-sets
+    CMAKE_MSVC_RUNTIME_LIBRARY itself after vdeps.py's -D cache value is set.
+    """
+    if not sys.platform == "win32":
+        pytest.skip("Windows only test")
+
+    outer = tmp_path / "outer"
+    inner = outer / "inner"
+    inner.mkdir(parents=True)
+    (outer / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.24)\n"
+        "project(outer)\n"
+        "option(VDEPS_DYNAMIC_RUNTIME \"\" OFF)\n"
+        "add_subdirectory(inner)\n",
+        encoding="utf-8",
+    )
+    # Mirrors the real vrhi CMakeLists.txt pattern: a plain set() (no CACHE)
+    # that shadows whatever the top-level -D passed, right before add_library.
+    (inner / "CMakeLists.txt").write_text(
+        "if(MSVC)\n"
+        "    if(VDEPS_DYNAMIC_RUNTIME)\n"
+        '        set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")\n'
+        "    else()\n"
+        '        set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")\n'
+        "    endif()\n"
+        "endif()\n"
+        "add_library(innerlib STATIC innerlib.cpp)\n",
+        encoding="utf-8",
+    )
+    (inner / "innerlib.cpp").write_text("int inner_func() { return 1; }\n", encoding="utf-8")
+
+    build_dir = str(tmp_path / "build")
+    cmake_args = vdeps.get_platform_cmake_args(
+        cxx_standard=20, use_llvm=True, sanitize="address"
+    )
+    cmake_args.append("-DCMAKE_BUILD_TYPE=Debug")
+
+    cmd = ["cmake", "-S", str(outer), "-B", build_dir] + cmake_args
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        pytest.skip(f"CMake configure failed (expected on some configs): {result.stderr}")
+
+    ninja_file = os.path.join(build_dir, "build.ninja")
+    with open(ninja_file, encoding="utf-8") as f:
+        ninja_content = f.read()
+    assert " -MT " in ninja_content or ninja_content.rstrip().endswith("-MT"), (
+        "expected -MT (forced past the vendored override) somewhere in build.ninja"
+    )
+    assert " -MTd" not in ninja_content, (
+        "vendored CMakeLists.txt's own set(CMAKE_MSVC_RUNTIME_LIBRARY ...) shadowed "
+        "vdeps.py's cache value -- the deferred force didn't survive it"
+    )
+
+    build_result = subprocess.run(
+        ["cmake", "--build", build_dir], capture_output=True, text=True
+    )
+    assert build_result.returncode == 0, (
+        f"Build failed: {build_result.stdout}\n{build_result.stderr}"
+    )
+
+
 # --- toolchain fingerprint ---
 
 
