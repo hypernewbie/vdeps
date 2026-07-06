@@ -165,6 +165,11 @@ def revert_patches(dep_dir, patches):
         print(f"Reverted patch: {patch['file']}")
 
 
+def filter_sanitize_patches(patches, sanitize_active):
+    """Keep patches whose optional sanitize=True flag matches the --sanitize state."""
+    return [p for p in patches if not p.get("sanitize") or sanitize_active]
+
+
 def is_build_dir_valid(build_dir):
     """Check if build directory exists and contains CMake cache for building."""
     try:
@@ -535,6 +540,41 @@ def get_platform_cmake_args(cxx_standard=20, use_llvm=False, use_dynamic_runtime
             args.append(f"-DCMAKE_MODULE_LINKER_FLAGS={link_flags}")
 
         return args
+
+
+_MERGEABLE_SANITIZE_FLAG_VARS = (
+    "CMAKE_C_FLAGS",
+    "CMAKE_CXX_FLAGS",
+    "CMAKE_EXE_LINKER_FLAGS",
+    "CMAKE_SHARED_LINKER_FLAGS",
+    "CMAKE_MODULE_LINKER_FLAGS",
+)
+
+
+def merge_duplicate_flag_args(cmake_args):
+    """Concatenate repeated -D<flag var>=... entries instead of last-one-wins silently dropping -fsanitize=."""
+    values = {}
+    for arg in cmake_args:
+        eq = arg.find("=") if arg.startswith("-D") else -1
+        if eq == -1:
+            continue
+        key, value = arg[2:eq], arg[eq + 1 :]
+        if key in _MERGEABLE_SANITIZE_FLAG_VARS:
+            values[key] = f"{values[key]} {value}" if key in values else value
+
+    seen = set()
+    merged = []
+    for arg in cmake_args:
+        eq = arg.find("=") if arg.startswith("-D") else -1
+        key = arg[2:eq] if eq != -1 else None
+        if key in _MERGEABLE_SANITIZE_FLAG_VARS:
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(f"-D{key}={values[key]}")
+        else:
+            merged.append(arg)
+    return merged
 
 
 def run_command(command, cwd=None, env=None):
@@ -1426,6 +1466,7 @@ def main():
         dep.extra_files = (
             filter_platform_items(dep.extra_files or []) if dep.extra_files else None
         )
+        dep.patches = filter_sanitize_patches(dep.patches, bool(args.sanitize))
 
         if dep.patches:
             print(f"--- Applying patches for {dep.name} ---")
@@ -1540,6 +1581,8 @@ def main():
                         + [f"-DCMAKE_BUILD_TYPE={build_type}"]
                         + final_cmake_options
                     )
+                    if args.sanitize:
+                        cmake_args = merge_duplicate_flag_args(cmake_args)
 
                     # Resolve library paths for Linker Flags (Bypassing MSBuild env sanitization)
                     link_dirs_abs = [output_lib_dir]

@@ -15,6 +15,7 @@ The flag drives four observable axes:
 
 import os
 import sys
+import shutil
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
@@ -1063,3 +1064,179 @@ def test_fingerprint_unaffected_by_sanitize_empty_string():
     a = vdeps.get_toolchain_fingerprint(False, False, None)
     b = vdeps.get_toolchain_fingerprint(False, False, "")
     assert a == b
+
+
+# --- sanitize-gated patches (vendored deps injecting flags that break --sanitize) ---
+
+
+def test_filter_sanitize_patches_keeps_unconditional_patches_always():
+    patches = [{"file": "a", "search": "x", "replace": "y"}]
+    assert vdeps.filter_sanitize_patches(patches, False) == patches
+    assert vdeps.filter_sanitize_patches(patches, True) == patches
+
+
+def test_filter_sanitize_patches_drops_sanitize_only_when_inactive():
+    patches = [{"file": "a", "search": "x", "replace": "y", "sanitize": True}]
+    assert vdeps.filter_sanitize_patches(patches, False) == []
+    assert vdeps.filter_sanitize_patches(patches, True) == patches
+
+
+def test_filter_sanitize_patches_mixed_list():
+    always = {"file": "a", "search": "x", "replace": "y"}
+    sanitize_only = {"file": "b", "search": "x", "replace": "y", "sanitize": True}
+    patches = [always, sanitize_only]
+    assert vdeps.filter_sanitize_patches(patches, False) == [always]
+    assert vdeps.filter_sanitize_patches(patches, True) == [always, sanitize_only]
+
+
+def test_sanitize_patch_fixes_idl_and_runtime_library_directives(tmp_path):
+    """Real build against an assimp-shaped dep injecting /D_DEBUG unconditionally; sanitize-gated patch fixes IDL/RuntimeLibrary."""
+    if not sys.platform == "win32":
+        pytest.skip("Windows only test")
+    readobj = shutil.which("llvm-readobj")
+    if not readobj:
+        pytest.skip("llvm-readobj not available")
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.10)\n"
+        "project(assimprepro LANGUAGES CXX)\n"
+        'SET(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /D_DEBUG /Zi /Od")\n'
+        "add_library(assimprepro STATIC lib.cpp)\n",
+        encoding="utf-8",
+    )
+    (proj / "lib.cpp").write_text(
+        "#include <vector>\nint f() { std::vector<int> v; v.push_back(1); return v[0]; }\n",
+        encoding="utf-8",
+    )
+
+    patches = [
+        {
+            "file": "CMakeLists.txt",
+            "search": ' /D_DEBUG /Zi /Od")',
+            "replace": ' /Zi /Od")',
+            "sanitize": True,
+        }
+    ]
+    active_patches = vdeps.filter_sanitize_patches(patches, True)
+    vdeps.apply_patches(str(proj), active_patches)
+    try:
+        build_dir = str(tmp_path / "build")
+        with patch("vdeps.IS_WINDOWS", True):
+            cmake_args = vdeps.get_platform_cmake_args(
+                cxx_standard=20, use_llvm=True, sanitize="address"
+            )
+        cmake_args.append("-DCMAKE_BUILD_TYPE=Debug")
+
+        cmd = ["cmake", "-S", str(proj), "-B", build_dir] + cmake_args
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        assert result.returncode == 0, (
+            f"Configure failed: {result.stdout}\n{result.stderr}"
+        )
+
+        build_result = subprocess.run(
+            ["cmake", "--build", build_dir], capture_output=True, text=True
+        )
+        assert build_result.returncode == 0, (
+            f"Build failed: {build_result.stdout}\n{build_result.stderr}"
+        )
+
+        lib_path = os.path.join(build_dir, "assimprepro.lib")
+        assert os.path.exists(lib_path)
+        directives = subprocess.run(
+            [readobj, "--coff-directives", lib_path],
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert '_ITERATOR_DEBUG_LEVEL=0' in directives
+        assert 'RuntimeLibrary=MT_StaticRelease' in directives
+        assert '_ITERATOR_DEBUG_LEVEL=2' not in directives
+        assert 'MTd_StaticDebug' not in directives
+    finally:
+        vdeps.revert_patches(str(proj), active_patches)
+        content = (proj / "CMakeLists.txt").read_text(encoding="utf-8")
+        assert "/D_DEBUG" in content, "patch revert did not restore the vendored source"
+
+
+# --- merging duplicate -D<FLAG_VAR>= entries for sanitize builds ---
+
+
+def test_merge_duplicate_flag_args_concatenates_and_preserves_position():
+    args = [
+        "-DCMAKE_CXX_STANDARD=20",
+        "-DCMAKE_CXX_FLAGS=/W0 /EHsc -fsanitize=address",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DCMAKE_CXX_FLAGS=/W0 /EHsc /FIchrono",
+    ]
+    assert vdeps.merge_duplicate_flag_args(args) == [
+        "-DCMAKE_CXX_STANDARD=20",
+        "-DCMAKE_CXX_FLAGS=/W0 /EHsc -fsanitize=address /W0 /EHsc /FIchrono",
+        "-DCMAKE_BUILD_TYPE=Debug",
+    ]
+
+
+def test_merge_duplicate_flag_args_leaves_single_occurrence_untouched():
+    args = ["-DCMAKE_CXX_FLAGS=/W0", "-DCMAKE_BUILD_TYPE=Debug"]
+    assert vdeps.merge_duplicate_flag_args(args) == args
+
+
+def test_merge_duplicate_flag_args_ignores_non_mergeable_keys():
+    args = ["-DFOO=1", "-DFOO=2"]
+    assert vdeps.merge_duplicate_flag_args(args) == args
+
+
+def test_merge_duplicate_flag_args_merges_all_tracked_variables():
+    args = [f"-D{key}=base" for key in vdeps._MERGEABLE_SANITIZE_FLAG_VARS] + [
+        f"-D{key}=override" for key in vdeps._MERGEABLE_SANITIZE_FLAG_VARS
+    ]
+    merged = vdeps.merge_duplicate_flag_args(args)
+    assert len(merged) == len(vdeps._MERGEABLE_SANITIZE_FLAG_VARS)
+    for key in vdeps._MERGEABLE_SANITIZE_FLAG_VARS:
+        assert f"-D{key}=base override" in merged
+
+
+def test_merge_duplicate_flag_args_survives_real_configure(tmp_path):
+    """Real build proving a dep-shaped cmake_options override no longer drops -fsanitize=."""
+    if not sys.platform == "win32":
+        pytest.skip("Windows only test")
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.10)\n"
+        "project(depshaped LANGUAGES CXX)\n"
+        "add_library(depshaped STATIC lib.cpp)\n",
+        encoding="utf-8",
+    )
+    (proj / "lib.cpp").write_text("int dep_func() { return 1; }\n", encoding="utf-8")
+
+    build_dir = str(tmp_path / "build")
+    with patch("vdeps.IS_WINDOWS", True):
+        cmake_args = vdeps.get_platform_cmake_args(
+            cxx_standard=20, use_llvm=True, sanitize="address"
+        )
+    cmake_args += [
+        "-DCMAKE_CXX_FLAGS=/W0 /EHsc /DVDEPS_TEST_MARKER",
+        "-DCMAKE_BUILD_TYPE=Debug",
+    ]
+    cmake_args = vdeps.merge_duplicate_flag_args(cmake_args)
+
+    cmd = ["cmake", "-S", str(proj), "-B", build_dir] + cmake_args
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    assert result.returncode == 0, f"Configure failed: {result.stdout}\n{result.stderr}"
+
+    ninja_file = os.path.join(build_dir, "build.ninja")
+    with open(ninja_file, encoding="utf-8") as f:
+        ninja_content = f.read()
+    assert "-fsanitize=address" in ninja_content, (
+        "dep-specific CXX_FLAGS override clobbered vdeps.py's -fsanitize= flag"
+    )
+    assert "VDEPS_TEST_MARKER" in ninja_content
+
+    build_result = subprocess.run(
+        ["cmake", "--build", build_dir], capture_output=True, text=True
+    )
+    assert build_result.returncode == 0, (
+        f"Build failed: {build_result.stdout}\n{build_result.stderr}"
+    )
