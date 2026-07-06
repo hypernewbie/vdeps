@@ -307,7 +307,7 @@ def test_get_platform_cmake_args_win_no_sanitize_has_no_project_include():
     assert not any(a.startswith("-DCMAKE_PROJECT_INCLUDE=") for a in args)
 
 
-def test_get_platform_cmake_args_win_llvm_sanitize_skips_compiler_works_probe():
+def test_get_platform_cmake_args_win_llvm_sanitize_sets_toolchain_file():
     with (
         patch("vdeps.IS_WINDOWS", True),
         patch(
@@ -316,12 +316,11 @@ def test_get_platform_cmake_args_win_llvm_sanitize_skips_compiler_works_probe():
         ),
     ):
         args = vdeps.get_platform_cmake_args(use_llvm=True, sanitize="address")
-    assert "-DCMAKE_C_COMPILER_WORKS=1" in args
-    assert "-DCMAKE_CXX_COMPILER_WORKS=1" in args
-    assert "-DCMAKE_SIZEOF_VOID_P=8" in args
+    toolchain_args = [a for a in args if a.startswith("-DCMAKE_TOOLCHAIN_FILE=")]
+    assert len(toolchain_args) == 1
 
 
-def test_get_platform_cmake_args_win_no_sanitize_keeps_compiler_works_probe():
+def test_get_platform_cmake_args_win_no_sanitize_has_no_toolchain_file():
     with (
         patch("vdeps.IS_WINDOWS", True),
         patch(
@@ -330,7 +329,7 @@ def test_get_platform_cmake_args_win_no_sanitize_keeps_compiler_works_probe():
         ),
     ):
         args = vdeps.get_platform_cmake_args(use_llvm=True)
-    assert not any("COMPILER_WORKS" in a or "SIZEOF_VOID_P" in a for a in args)
+    assert not any(a.startswith("-DCMAKE_TOOLCHAIN_FILE=") for a in args)
 
 
 def test_write_force_runtime_project_include_content(tmp_path):
@@ -342,6 +341,14 @@ def test_write_force_runtime_project_include_content(tmp_path):
     assert 'MSVC_RUNTIME_LIBRARY "MultiThreaded"' in content
     assert "BUILDSYSTEM_TARGETS" in content
     assert "SUBDIRECTORIES" in content
+
+
+def test_write_force_runtime_toolchain_file_content(tmp_path):
+    script_path = vdeps.write_force_runtime_toolchain_file("MultiThreaded")
+    assert os.path.exists(script_path)
+    with open(script_path, encoding="utf-8") as f:
+        content = f.read()
+    assert content.strip() == 'set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")'
 
 
 def test_force_runtime_project_include_survives_vendored_override(tmp_path):
@@ -420,7 +427,8 @@ def test_force_runtime_survives_pre_project_override(tmp_path):
         '    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")\n'
         "endif()\n"
         "project(luaurepro LANGUAGES CXX)\n"
-        "add_library(luaurepro STATIC lib.cpp)\n",
+        "add_library(luaurepro STATIC lib.cpp)\n"
+        "target_compile_features(luaurepro PUBLIC cxx_std_17)\n",
         encoding="utf-8",
     )
     (proj / "lib.cpp").write_text("int luau_func() { return 1; }\n", encoding="utf-8")
@@ -435,7 +443,8 @@ def test_force_runtime_survives_pre_project_override(tmp_path):
     cmd = ["cmake", "-S", str(proj), "-B", build_dir] + cmake_args
     result = subprocess.run(cmd, capture_output=True, text=True)
     assert result.returncode == 0, (
-        f"Configure failed (compiler-works probe not skipped): {result.stdout}\n{result.stderr}"
+        f"Configure failed (ABI/feature-detection try_compiles still saw the "
+        f"shadowed CRT): {result.stdout}\n{result.stderr}"
     )
 
     ninja_file = os.path.join(build_dir, "build.ninja")

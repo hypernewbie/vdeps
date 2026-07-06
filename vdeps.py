@@ -303,6 +303,16 @@ def write_force_runtime_project_include(runtime_library):
     return script_path.replace("\\", "/")
 
 
+def write_force_runtime_toolchain_file(runtime_library):
+    """Write a CMAKE_TOOLCHAIN_FILE forcing runtime_library before CMake's ABI/feature-detection try_compiles run; return its path."""
+    script_path = os.path.join(
+        tempfile.gettempdir(), "vdeps_force_msvc_runtime_library_toolchain.cmake"
+    )
+    with open(script_path, "w", encoding="utf-8") as f:
+        f.write(f'set(CMAKE_MSVC_RUNTIME_LIBRARY "{runtime_library}")\n')
+    return script_path.replace("\\", "/")
+
+
 def get_compiler_info(use_llvm):
     """Resolve (path, version) for the compiler vdeps would invoke.
 
@@ -476,12 +486,11 @@ def get_platform_cmake_args(cxx_standard=20, use_llvm=False, use_dynamic_runtime
                 args.append(f"-DCMAKE_PROJECT_INCLUDE={project_include}")
                 # A dep can set CMAKE_MSVC_RUNTIME_LIBRARY before its own
                 # project(), too early for CMAKE_PROJECT_INCLUDE to catch;
-                # skip CMake's compiler-works probe and pre-seed its ABI result.
-                args += [
-                    "-DCMAKE_C_COMPILER_WORKS=1",
-                    "-DCMAKE_CXX_COMPILER_WORKS=1",
-                    "-DCMAKE_SIZEOF_VOID_P=8",
-                ]
+                # override it before CMake's ABI/feature-detection try_compiles run.
+                toolchain_file = write_force_runtime_toolchain_file(
+                    msvc_runtime_library
+                )
+                args.append(f"-DCMAKE_TOOLCHAIN_FILE={toolchain_file}")
             return args
 
         args = (
