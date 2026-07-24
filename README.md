@@ -39,6 +39,13 @@ python vdeps.py --sanitize address
 python vdeps.py --sanitize memory
 python vdeps.py --sanitize thread,undefined
 
+# Cross-compile to a specific architecture on macOS (arm64 or x64; aliases: aarch64, x86_64, amd64)
+# Threads CMAKE_OSX_ARCHITECTURES through cmake and suffixes lib/ and build/ paths so arm64 and x64
+# outputs do not collide. Default (omitted) leaves the host arch's existing paths unchanged.
+python vdeps.py --arch arm64
+python vdeps.py --arch x64        # x86_64 build for Intel Macs (or testing under Rosetta on arm64)
+python vdeps.py --arch x64 --sanitize thread
+
 # Generate a thin CMake wrapper at vdeps/CMakeLists.txt
 python vdeps.py --generate-cmake
 ```
@@ -78,6 +85,7 @@ The generated wrapper exposes cache toggles for MSVC runtime and compiler option
 | `VDEPS_DYNAMIC_RUNTIME` | OFF | Build with `/MD` (dynamic runtime) |
 | `VDEPS_SANITIZE` | `""` | Sanitizer set forwarded to `vdeps.py --sanitize` (e.g. `thread`, `address`). Empty disables. Generates `vdeps_all_tsan`. |
 | `VDEPS_PARALLEL` | `""` | Cap parallel build workers (forwarded as `--parallel N`). Empty uses all cores. |
+| `VDEPS_ARCH` | `""` | Target architecture on macOS (forwarded as `--arch arm64` / `--arch x64`). Empty uses host arch. |
 
 *When neither `VDEPS_STATIC_RUNTIME` nor `VDEPS_DYNAMIC_RUNTIME` is set, `VDEPS_STATIC_RUNTIME` defaults to ON.
 
@@ -120,6 +128,8 @@ add_subdirectory(vdeps)
 | `vdeps_<name>_mt` | Individual dep with static runtime |
 | `vdeps_<name>_md` | Individual dep with dynamic runtime |
 | `vdeps_<name>_<runtime>_tsan` | Individual dep with sanitizers |
+
+Arch is a `--parallel`-class axis (modifier) rather than a `--sanitize`-class axis (multiplier): `VDEPS_ARCH` is forwarded to every `vdeps_build_dep` invocation as `--arch $VDEPS_ARCH`, but the target matrix is not duplicated. Consumers that want both arm64 and x64 builds use two separate build directories.
 
 This wrapper is build orchestration only in v1. It does not create imported CMake targets, propagate include directories, or add link instructions automatically, so linking remains manual.
 
@@ -184,6 +194,12 @@ root/
 ├── lib/
 │   ├── linux_debug/
 │   ├── linux_release/
+│   ├── mac_debug/         # arm64 host default (no --arch)
+│   ├── mac_release/
+│   ├── mac_arm64_debug/   # explicit --arch arm64
+│   ├── mac_arm64_release/
+│   ├── mac_x64_debug/     # explicit --arch x64 (cross-compile or x86_64 host)
+│   ├── mac_x64_release/
 │   ├── win_debug/
 │   ├── win_release/
 │   ├── win_llvm_debug/
@@ -193,19 +209,12 @@ root/
 │   ├── win_llvm_md_debug/
 │   └── win_llvm_md_release/
 └── tools/
-    ├── linux_debug/
-    ├── linux_release/
-    ├── win_debug/
-    ├── win_release/
-    ├── win_llvm_debug/
-    ├── win_llvm_release/
-    ├── win_md_debug/
-    ├── win_md_release/
-    ├── win_llvm_md_debug/
-    └── win_llvm_md_release/
+    ├── (mirror of lib/, same layout)
 ```
 
-The `_md` variants use dynamic MSVC runtime libraries (`/MD`, `/MDd`). The `_llvm_` prefix indicates Clang/LLVM builds. With `--sanitize thread`, output paths use a `_thread` tag (e.g. `linux_thread_debug/`, `win_llvm_thread_release/`); `--sanitize address` produces `_address`, comma-separated sets produce underscore-joined tags like `_thread_address`. The build directory is tagged the same way (`build_thread_debug`, `lib/address_release`, etc.). `--parallel N` does not affect directory names -- it only caps the worker count.
+The `_md` variants use dynamic MSVC runtime libraries (`/MD`, `/MDd`). The `_llvm_` prefix indicates Clang/LLVM builds. With `--sanitize thread`, output paths use a `_thread` tag (e.g. `linux_thread_debug/`, `win_llvm_thread_release/`); `--sanitize address` produces `_address`, comma-separated sets produce underscore-joined tags like `_thread_address`. The build directory is tagged the same way (`build_thread_debug`, `build_x64_thread_debug`, etc.). `--arch x64` adds a `_x64` segment on macOS (arch comes before sanitize: `mac_x64_thread_debug`). `--parallel N` does not affect directory names -- it only caps the worker count.
+
+**macOS cross-compile tip:** building with `--arch x64` from an arm64 host requires [Rosetta 2](https://support.apple.com/en-us/HT211861) for any host tools the deps run during their build (e.g. SPIRV-Tools codegen). Install it once with `softwareupdate --install-rosetta`.
 
 ## Platform-Specific Behaviour
 

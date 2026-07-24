@@ -686,7 +686,7 @@ def test_md_flag_passed_to_cmake_args(tmp_path):
     original_func = vdeps.get_platform_cmake_args
 
     def mock_platform_cmake_args(
-        cxx_standard=20, use_llvm=False, use_dynamic_runtime=False, sanitize=None
+        cxx_standard=20, use_llvm=False, use_dynamic_runtime=False, sanitize=None, arch=None
     ):
         captured_args["cxx_standard"] = cxx_standard
         captured_args["use_llvm"] = use_llvm
@@ -761,7 +761,7 @@ def test_platform_subdir_variations(tmp_path, argv, expected_platform_subdir):
     captured_platform = {}
 
     def mock_platform_cmake_args(
-        cxx_standard=20, use_llvm=False, use_dynamic_runtime=False, sanitize=None
+        cxx_standard=20, use_llvm=False, use_dynamic_runtime=False, sanitize=None, arch=None
     ):
         return [
             f"-DCMAKE_CXX_STANDARD={cxx_standard}",
