@@ -46,7 +46,7 @@ def make_dep_with_artifact(root, name="demo", lib="demo"):
     for config in ("debug", "release"):
         build_dir = dep_dir / f"build_{config}"
         build_dir.mkdir(parents=True, exist_ok=True)
-        (build_dir / f"{lib}.lib").write_text("lib", encoding="utf-8")
+        (build_dir / f"{lib}{vdeps.LIB_EXT}").write_text("lib", encoding="utf-8")
         # A CMakeCache makes --build consider the dir valid; harmless otherwise.
         (build_dir / "CMakeCache.txt").write_text("x", encoding="utf-8")
 
