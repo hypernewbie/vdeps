@@ -33,6 +33,13 @@ python vdeps.py --build --auto-skip
 # Cap parallel build workers on RAM-constrained boxes (default = all cores)
 python vdeps.py --parallel 4
 
+# Quiet by default (one [TAG] line per step, cmake output captured).
+# Full cmake/build logs plus per-file copy details:
+python vdeps.py --verbose       # or: python vdeps.py -v
+
+# Plain output without ANSI colors (also via NO_COLOR=1 or non-TTY)
+python vdeps.py --no-color
+
 # Build with ThreadSanitizer / AddressSanitizer / MemorySanitizer / UBSan
 python vdeps.py --sanitize thread
 python vdeps.py --sanitize address
