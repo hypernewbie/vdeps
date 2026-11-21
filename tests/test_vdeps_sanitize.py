@@ -1103,6 +1103,12 @@ def test_sanitize_patch_fixes_idl_and_runtime_library_directives(tmp_path):
         "cmake_minimum_required(VERSION 3.10)\n"
         "project(assimprepro LANGUAGES CXX)\n"
         'SET(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /D_DEBUG /Zi /Od")\n'
+        # windows-latest drift: the runner's MSVC STL gates on Clang 22+
+        # (STL1000) while the image ships Clang 20. This documented STL
+        # escape hatch silences only the version gate; the /D_DEBUG and
+        # RuntimeLibrary assertions below still exercise the patch.
+        'SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} '
+        '/D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH")\n'
         "add_library(assimprepro STATIC lib.cpp)\n",
         encoding="utf-8",
     )
