@@ -34,6 +34,7 @@ import sys
 import platform
 import argparse
 import re
+import stat
 import json
 import tempfile
 from datetime import datetime, timezone
@@ -1381,6 +1382,32 @@ def copy_tracked_file(src_path, dest_path, root_dir, copied_outputs):
     copied_outputs.append(to_root_relative_path(root_dir, dest_path))
 
 
+def _rmtree_onerror(func, path, _exc_info):
+    """shutil.rmtree ``onerror`` hook (Python < 3.12).
+
+    Windows refuses to unlink a read-only file (WinError 5); git marks its
+    object db read-only, and CMake FetchContent nests such checkouts inside
+    our build dirs (``_deps/<dep>-src/.git/objects/...``). Clear the flag
+    and retry the failed call once.
+    """
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+
+def _rmtree_onexc(func, path, _exc):
+    """shutil.rmtree ``onexc`` hook (Python >= 3.12). Same fix as above."""
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+
+def _rmtree(path):
+    """shutil.rmtree that survives read-only files (Windows git objects)."""
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=_rmtree_onexc)
+    else:
+        shutil.rmtree(path, onerror=_rmtree_onerror)
+
+
 # --- Main Build Logic ---
 
 
@@ -1571,14 +1598,14 @@ def main():
                                 )
                                 if os.path.isdir(build_dir):
                                     ui("CLEAN", "yellow", f"Removing {build_dir}")
-                                    shutil.rmtree(build_dir)
+                                    _rmtree(build_dir)
 
             # Clean temp_dir if specified
             if temp_dir and temp_dir.strip():
                 temp_path = os.path.join(root_dir, temp_dir.strip())
                 if os.path.exists(temp_path):
                     ui("CLEAN", "yellow", f"Removing temporary directory {temp_path}")
-                    shutil.rmtree(temp_path)
+                    _rmtree(temp_path)
 
             state_path = get_state_file_path(root_dir)
             if os.path.exists(state_path):
