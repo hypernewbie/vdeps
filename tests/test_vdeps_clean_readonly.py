@@ -37,16 +37,27 @@ def _is_writable(path):
 
 @contextmanager
 def _windows_unlink():
-    """Emulate Windows: unlinking a read-only file raises PermissionError."""
+    """Emulate Windows: unlinking a read-only file raises PermissionError.
+
+    Note: on POSIX, Python 3.12+ rmtree walks with dir fds and calls
+    ``os.unlink(name, dir_fd=fd)``, so the mode check must resolve through
+    dir_fd too -- otherwise the mock stats the bare name against the CWD,
+    misses, and silently delegates (leaking the emulation).
+    """
     real_unlink = os.unlink
+    real_stat = os.stat
 
     def windows_unlink(path, *args, **kwargs):
         if isinstance(path, (str, os.PathLike)):
+            dir_fd = kwargs.get("dir_fd")
             try:
-                writable = _is_writable(path)
-            except OSError:
-                return real_unlink(path, *args, **kwargs)
-            if not writable:
+                if dir_fd is not None:
+                    st = real_stat(path, dir_fd=dir_fd)
+                else:
+                    st = real_stat(path)
+            except (OSError, NotImplementedError, ValueError):
+                st = None
+            if st is not None and not (st.st_mode & stat.S_IWRITE):
                 raise PermissionError(errno.EACCES, "Permission denied", str(path))
         return real_unlink(path, *args, **kwargs)
 
